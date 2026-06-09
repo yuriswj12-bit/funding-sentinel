@@ -33,6 +33,8 @@ class RuleTests(unittest.TestCase):
     def test_tokenized_stock_symbol_filter(self) -> None:
         self.assertTrue(is_tokenized_stock_symbol("AAPLUSDT"))
         self.assertTrue(is_tokenized_stock_symbol("TSLAUSDT"))
+        self.assertTrue(is_tokenized_stock_symbol("CRWDUSDT"))
+        self.assertTrue(is_tokenized_stock_symbol("AAOIUSDT"))
         self.assertFalse(is_tokenized_stock_symbol("SENTUSDT"))
 
     def test_24h_volume_filter(self) -> None:
@@ -41,8 +43,8 @@ class RuleTests(unittest.TestCase):
         self.assertFalse(_passes_24h_volume_filter(_funding("SENTUSDT", -0.01, 4_000_000), settings))
         self.assertFalse(_passes_24h_volume_filter(_funding("SENTUSDT", -0.01, None), settings))
 
-    def test_settings_default_to_negative_funding_focus(self) -> None:
-        self.assertTrue(Settings().negative_funding_only)
+    def test_settings_default_to_include_positive_and_negative_funding(self) -> None:
+        self.assertFalse(Settings().negative_funding_only)
 
     def test_alert_detects_single_exchange_extreme(self) -> None:
         signals = [

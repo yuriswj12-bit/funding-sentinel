@@ -50,7 +50,7 @@ logged and stored but not pushed.
   - `MIN_ALERT_LEVEL=L3`
   - `MIN_24H_VOLUME_USDT=5000000`
   - `MAX_CANDIDATE_SYMBOLS=30`
-  - `NEGATIVE_FUNDING_ONLY=true`
+  - `NEGATIVE_FUNDING_ONLY=false`
   - `EXCLUDE_TOKENIZED_STOCKS=true`
 - Periodic report defaults:
   - `REPORT_ENABLED=true`

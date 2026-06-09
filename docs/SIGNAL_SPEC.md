@@ -31,9 +31,9 @@ Default mode is full-market discovery:
 
 This avoids pulling K lines for the entire market every cycle.
 
-By default `NEGATIVE_FUNDING_ONLY=true`, so the live alert stream focuses on
-extreme negative funding as a potential aggressive shorting/crowded-short
-signal. Set it to `false` to include positive funding extremes.
+By default `NEGATIVE_FUNDING_ONLY=false`, so the live alert stream includes both
+positive and negative funding extremes. Set it to `true` only when you want to
+focus exclusively on negative funding.
 
 ## Volume
 

@@ -24,7 +24,6 @@ class ReportTests(unittest.TestCase):
                 window_hours=12,
                 top_n=10,
                 min_level_rank=3,
-                negative_funding_only=False,
             )
             self.assertIsNotNone(report)
             assert report is not None
@@ -45,7 +44,6 @@ class ReportTests(unittest.TestCase):
                 window_hours=12,
                 top_n=10,
                 min_level_rank=3,
-                negative_funding_only=False,
                 mark_sent=False,
             )
             self.assertIsNotNone(report)

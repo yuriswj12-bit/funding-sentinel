@@ -28,6 +28,8 @@ TOKENIZED_STOCK_BASES = {
     "AMD",
     "BABA",
     "COIN",
+    "CRCL",
+    "CRWD",
     "GOOGL",
     "META",
     "MSFT",
@@ -41,6 +43,7 @@ TOKENIZED_STOCK_BASES = {
     "SPY",
     "TSLA",
     "IWM",
+    "AAOI",
 }
 
 
@@ -52,7 +55,7 @@ class Settings:
     max_candidate_symbols: int = 30
     min_24h_volume_usdt: float = 5_000_000
     prefer_negative_funding: bool = True
-    negative_funding_only: bool = True
+    negative_funding_only: bool = False
     exclude_tokenized_stocks: bool = True
     funding_levels: dict[str, float] = field(default_factory=lambda: dict(FUNDING_LEVELS))
     volume_timeframe: str = "15m"
@@ -84,7 +87,7 @@ def load_settings() -> Settings:
         max_candidate_symbols=_int("MAX_CANDIDATE_SYMBOLS", 30),
         min_24h_volume_usdt=_float_env("MIN_24H_VOLUME_USDT", 5_000_000),
         prefer_negative_funding=_bool("PREFER_NEGATIVE_FUNDING", True),
-        negative_funding_only=_bool("NEGATIVE_FUNDING_ONLY", True),
+        negative_funding_only=_bool("NEGATIVE_FUNDING_ONLY", False),
         exclude_tokenized_stocks=_bool("EXCLUDE_TOKENIZED_STOCKS", True),
         check_interval_seconds=_int("CHECK_INTERVAL_SECONDS", 45),
         alert_cooldown_seconds=_int("ALERT_COOLDOWN_SECONDS", 45 * 60),
