@@ -128,6 +128,40 @@ class Storage:
         )
         self.conn.commit()
 
+    def fetch_recent_alerts(self, since: datetime, min_level_rank: int) -> list[sqlite3.Row]:
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM alerts
+            WHERE timestamp >= ?
+            ORDER BY timestamp DESC
+            """,
+            (_dt(since),),
+        ).fetchall()
+        return [row for row in rows if level_rank(row["level"]) >= min_level_rank]
+
+    def should_send_report(self, report_name: str, interval_seconds: int, now: datetime) -> bool:
+        row = self.conn.execute(
+            "SELECT last_sent_at FROM report_state WHERE report_name = ?",
+            (report_name,),
+        ).fetchone()
+        if row is None:
+            return True
+        last_sent_at = _parse_dt(row["last_sent_at"])
+        return (now - last_sent_at).total_seconds() >= interval_seconds
+
+    def mark_report_sent(self, report_name: str, sent_at: datetime) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO report_state (report_name, last_sent_at)
+            VALUES (?, ?)
+            ON CONFLICT(report_name) DO UPDATE SET
+                last_sent_at = excluded.last_sent_at
+            """,
+            (report_name, _dt(sent_at)),
+        )
+        self.conn.commit()
+
     def _init_schema(self) -> None:
         self.conn.executescript(
             """
@@ -183,6 +217,11 @@ class Storage:
                 fingerprint TEXT PRIMARY KEY,
                 last_sent_at TEXT NOT NULL,
                 last_level TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS report_state (
+                report_name TEXT PRIMARY KEY,
+                last_sent_at TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_funding_symbol_time

@@ -66,6 +66,10 @@ class Settings:
     tg_chat_id: str = ""
     tg_parse_mode: str = "Markdown"
     dry_run: bool = False
+    report_enabled: bool = True
+    report_interval_hours: int = 12
+    report_window_hours: int = 12
+    report_top_n: int = 10
 
     @property
     def min_alert_rank(self) -> int:
@@ -90,6 +94,10 @@ def load_settings() -> Settings:
         tg_bot_token=os.getenv("TG_BOT_TOKEN", ""),
         tg_chat_id=os.getenv("TG_CHAT_ID", ""),
         dry_run=_bool("DRY_RUN", False),
+        report_enabled=_bool("REPORT_ENABLED", True),
+        report_interval_hours=_int("REPORT_INTERVAL_HOURS", 12),
+        report_window_hours=_int("REPORT_WINDOW_HOURS", 12),
+        report_top_n=_int("REPORT_TOP_N", 10),
     )
 
 

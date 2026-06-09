@@ -16,6 +16,7 @@ not require exchange API keys.
   and volume-confirmed signals.
 - Writes funding, volume, and alert records to SQLite.
 - Sends Telegram alerts with cooldown and level-upgrade handling.
+- Sends a periodic summary report for the strongest recent signals.
 
 ## Quick Start
 
@@ -51,6 +52,11 @@ logged and stored but not pushed.
   - `MAX_CANDIDATE_SYMBOLS=30`
   - `NEGATIVE_FUNDING_ONLY=true`
   - `EXCLUDE_TOKENIZED_STOCKS=true`
+- Periodic report defaults:
+  - `REPORT_ENABLED=true`
+  - `REPORT_INTERVAL_HOURS=12`
+  - `REPORT_WINDOW_HOURS=12`
+  - `REPORT_TOP_N=10`
 - Volume comparisons are per exchange only. Absolute volume is not compared
   across exchanges because units can differ by venue.
 - Funding source is marked as `predicted` when a next funding value is available,

@@ -75,3 +75,24 @@ symbol + exchange + direction
 
 Default cooldown is 15 minutes. L4 cooldown is 5 minutes. A higher funding level
 than the last sent level bypasses cooldown immediately.
+
+## Periodic Report
+
+When `REPORT_ENABLED=true`, the service checks after each scan whether a report
+is due. Defaults:
+
+- `REPORT_INTERVAL_HOURS=12`
+- `REPORT_WINDOW_HOURS=12`
+- `REPORT_TOP_N=10`
+
+The report reads recent alert records from SQLite, deduplicates by symbol, and
+ranks by:
+
+1. Funding level
+2. Volume confirmation
+3. Multi-exchange sync
+4. Absolute funding rate
+5. Volume ratio
+
+If there are no L3+ alerts in the window, the service records the report check
+but does not send an empty Telegram message.

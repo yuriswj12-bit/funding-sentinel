@@ -9,8 +9,9 @@ from contextlib import suppress
 from funding_sentinel.analysis import build_alerts
 from funding_sentinel.config import Settings, is_tokenized_stock_symbol, level_rank, load_settings
 from funding_sentinel.exchanges.ccxt_client import CcxtExchangeClient, close_all
-from funding_sentinel.models import ExchangeSignal, FundingSnapshot
+from funding_sentinel.models import ExchangeSignal, FundingSnapshot, utc_now
 from funding_sentinel.notifier import TelegramNotifier
+from funding_sentinel.report import maybe_build_periodic_report
 from funding_sentinel.storage import Storage
 
 logging.basicConfig(
@@ -103,6 +104,26 @@ async def run_once(
         storage.mark_alert_sent(alert, delivered=delivered, error=error)
         if error:
             logger.info("Alert recorded with delivery status: %s", error)
+
+    if settings.report_enabled:
+        report = maybe_build_periodic_report(
+            storage,
+            now=utc_now(),
+            interval_hours=settings.report_interval_hours,
+            window_hours=settings.report_window_hours,
+            top_n=settings.report_top_n,
+            min_level_rank=settings.min_alert_rank,
+            negative_funding_only=settings.negative_funding_only,
+            exclude_tokenized_stocks=settings.exclude_tokenized_stocks,
+            mark_sent=not settings.dry_run,
+        )
+        if report:
+            if settings.dry_run:
+                logger.info("Dry-run report:\n%s", report)
+            else:
+                delivered, error = notifier.send(report)
+                if error:
+                    logger.info("Report delivery status: %s", error)
 
 
 async def _collect_signal(
