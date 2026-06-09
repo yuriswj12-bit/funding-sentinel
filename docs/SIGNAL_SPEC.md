@@ -19,15 +19,21 @@ snapshot source as `current`.
 
 Default mode is full-market discovery:
 
-1. Pull batch funding snapshots from Binance USD-M, Bybit linear, and Bitget
-   USDT futures.
+1. Pull funding snapshots from Binance USD-M, OKX USDT swaps, Bybit linear, and
+   Bitget USDT futures.
 2. Select symbols whose absolute funding rate reaches the configured minimum
    alert level.
-3. Keep the most severe `MAX_CANDIDATE_SYMBOLS` candidates.
-4. Fetch per-symbol funding and 15m volume snapshots across all configured
-   venues, including OKX when the candidate exists there.
+3. Filter out low-liquidity markets with `MIN_24H_VOLUME_USDT`.
+4. Filter out tokenized stock symbols when `EXCLUDE_TOKENIZED_STOCKS=true`.
+5. Keep the most severe `MAX_CANDIDATE_SYMBOLS` candidates.
+6. Fetch per-symbol funding and 15m volume snapshots across all configured
+   venues when the candidate exists there.
 
 This avoids pulling K lines for the entire market every cycle.
+
+By default `NEGATIVE_FUNDING_ONLY=true`, so the live alert stream focuses on
+extreme negative funding as a potential aggressive shorting/crowded-short
+signal. Set it to `false` to include positive funding extremes.
 
 ## Volume
 

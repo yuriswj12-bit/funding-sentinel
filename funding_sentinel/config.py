@@ -22,6 +22,26 @@ VOLUME_LEVELS: list[tuple[str, float | None, float | None]] = [
 ]
 
 EXCHANGE_IDS = ("binanceusdm", "okx", "bitget", "bybit")
+TOKENIZED_STOCK_BASES = {
+    "AAPL",
+    "AMZN",
+    "AMD",
+    "BABA",
+    "COIN",
+    "GOOGL",
+    "META",
+    "MSFT",
+    "MSTR",
+    "NFLX",
+    "NOKIA",
+    "NVDA",
+    "QQQ",
+    "SAMSUNG",
+    "SKHYNIX",
+    "SPY",
+    "TSLA",
+    "IWM",
+}
 
 
 @dataclass(frozen=True)
@@ -29,7 +49,11 @@ class Settings:
     monitored_symbols: list[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "ZECUSDT"])
     exchange_ids: tuple[str, ...] = EXCHANGE_IDS
     market_scan: bool = True
-    max_candidate_symbols: int = 10
+    max_candidate_symbols: int = 30
+    min_24h_volume_usdt: float = 5_000_000
+    prefer_negative_funding: bool = True
+    negative_funding_only: bool = True
+    exclude_tokenized_stocks: bool = True
     funding_levels: dict[str, float] = field(default_factory=lambda: dict(FUNDING_LEVELS))
     volume_timeframe: str = "15m"
     volume_prev_bars: int = 8
@@ -53,7 +77,11 @@ def load_settings() -> Settings:
     return Settings(
         monitored_symbols=_csv("MONITORED_SYMBOLS", ["BTCUSDT", "ETHUSDT", "ZECUSDT"]),
         market_scan=_bool("MARKET_SCAN", True),
-        max_candidate_symbols=_int("MAX_CANDIDATE_SYMBOLS", 10),
+        max_candidate_symbols=_int("MAX_CANDIDATE_SYMBOLS", 30),
+        min_24h_volume_usdt=_float_env("MIN_24H_VOLUME_USDT", 5_000_000),
+        prefer_negative_funding=_bool("PREFER_NEGATIVE_FUNDING", True),
+        negative_funding_only=_bool("NEGATIVE_FUNDING_ONLY", True),
+        exclude_tokenized_stocks=_bool("EXCLUDE_TOKENIZED_STOCKS", True),
         check_interval_seconds=_int("CHECK_INTERVAL_SECONDS", 45),
         alert_cooldown_seconds=_int("ALERT_COOLDOWN_SECONDS", 15 * 60),
         l4_cooldown_seconds=_int("L4_COOLDOWN_SECONDS", 5 * 60),
@@ -122,6 +150,14 @@ def volume_level(ratio: float | None) -> str:
     return "unknown"
 
 
+def is_tokenized_stock_symbol(symbol: str) -> bool:
+    normalized = symbol.upper()
+    if not normalized.endswith("USDT"):
+        return False
+    base = normalized[:-4]
+    return base in TOKENIZED_STOCK_BASES
+
+
 def _csv(key: str, default: list[str]) -> list[str]:
     raw = os.getenv(key)
     if not raw:
@@ -132,6 +168,11 @@ def _csv(key: str, default: list[str]) -> list[str]:
 def _int(key: str, default: int) -> int:
     raw = os.getenv(key)
     return int(raw) if raw else default
+
+
+def _float_env(key: str, default: float) -> float:
+    raw = os.getenv(key)
+    return float(raw) if raw else default
 
 
 def _bool(key: str, default: bool) -> bool:

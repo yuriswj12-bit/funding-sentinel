@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import logging
 from typing import Any
@@ -50,6 +51,7 @@ class CcxtExchangeClient:
             funding_source=raw["funding_source"],
             next_funding_time=from_ms(raw.get("next_funding_time")),
             mark_price=raw.get("mark_price"),
+            volume_24h_usdt=raw.get("volume_24h_usdt"),
             timestamp=from_ms(raw.get("timestamp")) or utc_now(),
             level=funding_level(rate, self.funding_levels),
             direction=funding_direction(rate),
@@ -118,6 +120,7 @@ def _fetch_funding(exchange_id: str, compact_symbol: str) -> dict[str, Any]:
             "funding_source": "current",
             "next_funding_time": _int(data.get("nextFundingTime")),
             "mark_price": _float(data.get("markPrice")),
+            "volume_24h_usdt": None,
             "timestamp": _int(data.get("time")),
         }
 
@@ -133,6 +136,7 @@ def _fetch_funding(exchange_id: str, compact_symbol: str) -> dict[str, Any]:
             "funding_source": "predicted" if next_rate is not None else "current",
             "next_funding_time": _int(item.get("nextFundingTime") or item.get("fundingTime")),
             "mark_price": None,
+            "volume_24h_usdt": None,
             "timestamp": _int(item.get("ts")),
         }
 
@@ -148,6 +152,7 @@ def _fetch_funding(exchange_id: str, compact_symbol: str) -> dict[str, Any]:
             "funding_source": "current",
             "next_funding_time": _int(item.get("nextUpdate")),
             "mark_price": None,
+            "volume_24h_usdt": None,
             "timestamp": _int(data.get("requestTime")),
         }
 
@@ -163,6 +168,7 @@ def _fetch_funding(exchange_id: str, compact_symbol: str) -> dict[str, Any]:
             "funding_source": "current",
             "next_funding_time": _int(item.get("nextFundingTime")),
             "mark_price": _float(item.get("markPrice")),
+            "volume_24h_usdt": _float(item.get("turnover24h")),
             "timestamp": _int(data.get("time")),
         }
 
@@ -172,6 +178,11 @@ def _fetch_funding(exchange_id: str, compact_symbol: str) -> dict[str, Any]:
 def _fetch_market_funding(exchange_id: str) -> list[dict[str, Any]]:
     if exchange_id == "binanceusdm":
         data = _get_json("https://fapi.binance.com/fapi/v1/premiumIndex", {})
+        tickers = {
+            item["symbol"]: item
+            for item in _get_json("https://fapi.binance.com/fapi/v1/ticker/24hr", {})
+            if str(item.get("symbol", "")).endswith("USDT")
+        }
         return [
             {
                 "compact_symbol": item["symbol"],
@@ -180,6 +191,7 @@ def _fetch_market_funding(exchange_id: str) -> list[dict[str, Any]]:
                 "funding_source": "current",
                 "next_funding_time": _int(item.get("nextFundingTime")),
                 "mark_price": _float(item.get("markPrice")),
+                "volume_24h_usdt": _float((tickers.get(item["symbol"]) or {}).get("quoteVolume")),
                 "timestamp": _int(item.get("time")),
             }
             for item in data
@@ -196,6 +208,7 @@ def _fetch_market_funding(exchange_id: str) -> list[dict[str, Any]]:
                 "funding_source": "current",
                 "next_funding_time": _int(item.get("nextFundingTime")),
                 "mark_price": _float(item.get("markPrice")),
+                "volume_24h_usdt": _float(item.get("turnover24h")),
                 "timestamp": _int(data.get("time")),
             }
             for item in data["result"]["list"]
@@ -203,6 +216,15 @@ def _fetch_market_funding(exchange_id: str) -> list[dict[str, Any]]:
         ]
 
     if exchange_id == "bitget":
+        tickers_data = _get_json(
+            "https://api.bitget.com/api/v2/mix/market/tickers",
+            {"productType": "USDT-FUTURES"},
+        )
+        tickers = {
+            item["symbol"]: item
+            for item in tickers_data.get("data", [])
+            if str(item.get("symbol", "")).endswith("USDT")
+        }
         data = _get_json(
             "https://api.bitget.com/api/v2/mix/market/current-fund-rate",
             {"productType": "USDT-FUTURES"},
@@ -215,11 +237,46 @@ def _fetch_market_funding(exchange_id: str) -> list[dict[str, Any]]:
                 "funding_source": "current",
                 "next_funding_time": _int(item.get("nextUpdate")),
                 "mark_price": None,
+                "volume_24h_usdt": _first_float(
+                    (tickers.get(item["symbol"]) or {}),
+                    "usdtVolume",
+                    "quoteVolume",
+                    "baseVolume",
+                ),
                 "timestamp": _int(data.get("requestTime")),
             }
             for item in data["data"]
             if str(item.get("symbol", "")).endswith("USDT") and _float(item.get("fundingRate")) is not None
         ]
+
+    if exchange_id == "okx":
+        instruments = _get_json("https://www.okx.com/api/v5/public/instruments", {"instType": "SWAP"})
+        tickers_data = _get_json("https://www.okx.com/api/v5/market/tickers", {"instType": "SWAP"})
+        tickers = {
+            item["instId"]: item
+            for item in tickers_data.get("data", [])
+            if str(item.get("instId", "")).endswith("-USDT-SWAP")
+        }
+        symbols = [
+            item["instId"].replace("-USDT-SWAP", "USDT")
+            for item in instruments.get("data", [])
+            if item.get("state") == "live" and str(item.get("instId", "")).endswith("-USDT-SWAP")
+        ]
+        results: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            future_map = {executor.submit(_fetch_funding, exchange_id, symbol): symbol for symbol in symbols}
+            for future in as_completed(future_map):
+                symbol = future_map[future]
+                try:
+                    item = future.result()
+                except Exception as exc:
+                    logger.debug("OKX market funding failed for %s: %r", symbol, exc)
+                    continue
+                item["compact_symbol"] = symbol
+                ticker = tickers.get(item["venue_symbol"]) or {}
+                item["volume_24h_usdt"] = _okx_quote_volume(ticker)
+                results.append(item)
+        return results
 
     return []
 
@@ -341,6 +398,25 @@ def _float(value: Any) -> float | None:
     if value is None or value == "":
         return None
     return float(value)
+
+
+def _first_float(source: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = _float(source.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _okx_quote_volume(ticker: dict[str, Any]) -> float | None:
+    direct = _first_float(ticker, "volCcyQuote24h", "volUsd24h")
+    if direct is not None:
+        return direct
+    base_volume = _float(ticker.get("volCcy24h"))
+    last_price = _float(ticker.get("last"))
+    if base_volume is None or last_price is None:
+        return None
+    return base_volume * last_price
 
 
 def _int(value: Any) -> int | None:

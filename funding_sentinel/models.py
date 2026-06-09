@@ -17,6 +17,7 @@ class FundingSnapshot:
     funding_source: str
     next_funding_time: datetime | None
     mark_price: float | None
+    volume_24h_usdt: float | None
     timestamp: datetime
     level: str | None
     direction: str
@@ -57,4 +58,3 @@ class Alert:
     message: str
     fingerprint: str
     timestamp: datetime
-

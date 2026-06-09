@@ -7,8 +7,9 @@ not require exchange API keys.
 ## What It Does
 
 - Discovers abnormal funding-rate symbols across the whole USDT perpetual market.
-- Uses Binance, Bybit, and Bitget batch funding endpoints for market discovery,
-  then uses OKX as a confirmation venue for candidate symbols.
+- Uses Binance, OKX, Bybit, and Bitget public funding endpoints for market discovery.
+- Filters low-liquidity contracts with `MIN_24H_VOLUME_USDT`.
+- Excludes common tokenized stock symbols by default.
 - Computes L1-L4 funding severity in both positive and negative directions.
 - Compares the current 15m candle volume against the previous 8 candles.
 - Detects single-exchange extremes, multi-exchange sync, direction conflicts,
@@ -44,6 +45,12 @@ logged and stored but not pushed.
 - `MARKET_SCAN=true` is the default. In this mode, `MONITORED_SYMBOLS` is ignored
   and the system scans the broader USDT perpetual market for funding anomalies.
 - Set `MARKET_SCAN=false` to monitor only `MONITORED_SYMBOLS`.
+- Default market filters:
+  - `MIN_ALERT_LEVEL=L3`
+  - `MIN_24H_VOLUME_USDT=5000000`
+  - `MAX_CANDIDATE_SYMBOLS=30`
+  - `NEGATIVE_FUNDING_ONLY=true`
+  - `EXCLUDE_TOKENIZED_STOCKS=true`
 - Volume comparisons are per exchange only. Absolute volume is not compared
   across exchanges because units can differ by venue.
 - Funding source is marked as `predicted` when a next funding value is available,

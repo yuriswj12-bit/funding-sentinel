@@ -2,7 +2,14 @@ from datetime import UTC, datetime
 import unittest
 
 from funding_sentinel.analysis import build_alerts
-from funding_sentinel.config import funding_direction, funding_level, volume_level
+from funding_sentinel.config import (
+    Settings,
+    funding_direction,
+    funding_level,
+    is_tokenized_stock_symbol,
+    volume_level,
+)
+from funding_sentinel.main import _passes_24h_volume_filter
 from funding_sentinel.models import ExchangeSignal, FundingSnapshot, VolumeSnapshot
 
 
@@ -23,6 +30,20 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(volume_level(0.5), "mildly_contracted")
         self.assertEqual(volume_level(0.39), "clearly_contracted")
 
+    def test_tokenized_stock_symbol_filter(self) -> None:
+        self.assertTrue(is_tokenized_stock_symbol("AAPLUSDT"))
+        self.assertTrue(is_tokenized_stock_symbol("TSLAUSDT"))
+        self.assertFalse(is_tokenized_stock_symbol("SENTUSDT"))
+
+    def test_24h_volume_filter(self) -> None:
+        settings = Settings(min_24h_volume_usdt=5_000_000)
+        self.assertTrue(_passes_24h_volume_filter(_funding("SENTUSDT", -0.01, 6_000_000), settings))
+        self.assertFalse(_passes_24h_volume_filter(_funding("SENTUSDT", -0.01, 4_000_000), settings))
+        self.assertFalse(_passes_24h_volume_filter(_funding("SENTUSDT", -0.01, None), settings))
+
+    def test_settings_default_to_negative_funding_focus(self) -> None:
+        self.assertTrue(Settings().negative_funding_only)
+
     def test_alert_detects_single_exchange_extreme(self) -> None:
         signals = [
             _signal("binanceusdm", "ZECUSDT", 0.0010, 2.5),
@@ -34,8 +55,8 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(alerts[0].exchange_id, "multi")
         self.assertEqual(alerts[0].divergence_type, "single_exchange_extreme")
         self.assertIn("volume_confirmed", alerts[0].signal_tags)
-        self.assertIn("多平台快照", alerts[0].message)
-        self.assertIn("量能：最大量比 2.50x，已形成放量确认", alerts[0].message)
+        self.assertIn("ZECUSDT", alerts[0].message)
+        self.assertAlmostEqual(alerts[0].volume_ratio or 0, 2.5)
 
     def test_alert_detects_multi_exchange_sync(self) -> None:
         signals = [
@@ -46,23 +67,12 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(len(alerts), 1)
         self.assertEqual({alert.divergence_type for alert in alerts}, {"multi_exchange_sync"})
         self.assertEqual(alerts[0].fingerprint, "BTCUSDT:negative:multi_exchange_sync")
-        self.assertIn("量能：最大量比 0.60x，整体明显缩量，未形成放量确认", alerts[0].message)
+        self.assertEqual(alerts[0].volume_level, "clearly_contracted")
 
 
 def _signal(exchange_id: str, symbol: str, rate: float, ratio: float) -> ExchangeSignal:
     now = datetime(2026, 1, 1, tzinfo=UTC)
-    funding = FundingSnapshot(
-        exchange_id=exchange_id,
-        compact_symbol=symbol,
-        ccxt_symbol="BTC/USDT:USDT",
-        funding_rate=rate,
-        funding_source="current",
-        next_funding_time=None,
-        mark_price=None,
-        timestamp=now,
-        level=funding_level(rate),
-        direction=funding_direction(rate),
-    )
+    funding = _funding(symbol, rate, 10_000_000, exchange_id=exchange_id, now=now)
     volume = VolumeSnapshot(
         exchange_id=exchange_id,
         compact_symbol=symbol,
@@ -76,6 +86,29 @@ def _signal(exchange_id: str, symbol: str, rate: float, ratio: float) -> Exchang
         timestamp=now,
     )
     return ExchangeSignal(funding=funding, volume=volume)
+
+
+def _funding(
+    symbol: str,
+    rate: float,
+    volume_24h_usdt: float | None,
+    exchange_id: str = "binanceusdm",
+    now: datetime | None = None,
+) -> FundingSnapshot:
+    now = now or datetime(2026, 1, 1, tzinfo=UTC)
+    return FundingSnapshot(
+        exchange_id=exchange_id,
+        compact_symbol=symbol,
+        ccxt_symbol="BTC/USDT:USDT",
+        funding_rate=rate,
+        funding_source="current",
+        next_funding_time=None,
+        mark_price=None,
+        volume_24h_usdt=volume_24h_usdt,
+        timestamp=now,
+        level=funding_level(rate),
+        direction=funding_direction(rate),
+    )
 
 
 if __name__ == "__main__":

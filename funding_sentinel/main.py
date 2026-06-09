@@ -7,7 +7,7 @@ import signal
 from contextlib import suppress
 
 from funding_sentinel.analysis import build_alerts
-from funding_sentinel.config import Settings, level_rank, load_settings
+from funding_sentinel.config import Settings, is_tokenized_stock_symbol, level_rank, load_settings
 from funding_sentinel.exchanges.ccxt_client import CcxtExchangeClient, close_all
 from funding_sentinel.models import ExchangeSignal, FundingSnapshot
 from funding_sentinel.notifier import TelegramNotifier
@@ -137,7 +137,7 @@ async def _discover_market_candidates(
     )
     funding_cache: dict[tuple[str, str], FundingSnapshot] = {}
     supported_symbols: dict[str, set[str]] = {}
-    severity_by_symbol: dict[str, tuple[int, float]] = {}
+    severity_by_symbol: dict[str, tuple[int, int, float, float]] = {}
 
     for client, result in zip(clients, symbol_results, strict=True):
         if isinstance(result, Exception):
@@ -153,11 +153,23 @@ async def _discover_market_candidates(
         logger.info("Discovered %s funding snapshots from %s", len(result), client.exchange_id)
         for snapshot in result:
             funding_cache[(client.exchange_id, snapshot.compact_symbol)] = snapshot
+            if settings.exclude_tokenized_stocks and is_tokenized_stock_symbol(snapshot.compact_symbol):
+                continue
+            if settings.negative_funding_only and snapshot.funding_rate >= 0:
+                continue
+            if not _passes_24h_volume_filter(snapshot, settings):
+                continue
             rank = level_rank(snapshot.level)
             if rank < settings.min_alert_rank:
                 continue
-            score = (rank, abs(snapshot.funding_rate))
-            if score > severity_by_symbol.get(snapshot.compact_symbol, (0, 0.0)):
+            negative_priority = 1 if settings.prefer_negative_funding and snapshot.funding_rate < 0 else 0
+            score = (
+                rank,
+                negative_priority,
+                abs(snapshot.funding_rate),
+                snapshot.volume_24h_usdt or 0.0,
+            )
+            if score > severity_by_symbol.get(snapshot.compact_symbol, (0, 0, 0.0, 0.0)):
                 severity_by_symbol[snapshot.compact_symbol] = score
 
     sorted_symbols = sorted(
@@ -173,6 +185,14 @@ async def _discover_market_candidates(
         len(severity_by_symbol),
     )
     return sorted_symbols, funding_cache, supported_symbols
+
+
+def _passes_24h_volume_filter(snapshot: FundingSnapshot, settings: Settings) -> bool:
+    if settings.min_24h_volume_usdt <= 0:
+        return True
+    if snapshot.volume_24h_usdt is None:
+        return False
+    return snapshot.volume_24h_usdt >= settings.min_24h_volume_usdt
 
 
 def run() -> None:

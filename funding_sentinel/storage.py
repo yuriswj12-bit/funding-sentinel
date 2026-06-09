@@ -24,8 +24,8 @@ class Storage:
             """
             INSERT INTO funding_snapshots (
                 timestamp, exchange_id, compact_symbol, ccxt_symbol, funding_rate,
-                funding_source, next_funding_time, mark_price, level, direction
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                funding_source, next_funding_time, mark_price, volume_24h_usdt, level, direction
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _dt(snapshot.timestamp),
@@ -36,6 +36,7 @@ class Storage:
                 snapshot.funding_source,
                 _dt(snapshot.next_funding_time),
                 snapshot.mark_price,
+                snapshot.volume_24h_usdt,
                 snapshot.level,
                 snapshot.direction,
             ),
@@ -140,6 +141,7 @@ class Storage:
                 funding_source TEXT NOT NULL,
                 next_funding_time TEXT,
                 mark_price REAL,
+                volume_24h_usdt REAL,
                 level TEXT,
                 direction TEXT NOT NULL
             );
@@ -189,6 +191,12 @@ class Storage:
                 ON alerts (compact_symbol, timestamp);
             """
         )
+        columns = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(funding_snapshots)").fetchall()
+        }
+        if "volume_24h_usdt" not in columns:
+            self.conn.execute("ALTER TABLE funding_snapshots ADD COLUMN volume_24h_usdt REAL")
         self.conn.commit()
 
 
@@ -203,4 +211,3 @@ def _parse_dt(value: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed
-
