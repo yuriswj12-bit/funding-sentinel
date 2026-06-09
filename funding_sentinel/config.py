@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+FUNDING_LEVELS: dict[str, float] = {
+    "L1": 0.0003,
+    "L2": 0.0005,
+    "L3": 0.0008,
+    "L4": 0.0012,
+}
+
+VOLUME_LEVELS: list[tuple[str, float | None, float | None]] = [
+    ("highly_expanded", 3.0, None),
+    ("expanded", 2.0, 3.0),
+    ("mildly_expanded", 1.3, 2.0),
+    ("normal", 0.7, 1.3),
+    ("mildly_contracted", 0.4, 0.7),
+    ("clearly_contracted", None, 0.4),
+]
+
+EXCHANGE_IDS = ("binanceusdm", "okx", "bitget", "bybit")
+
+
+@dataclass(frozen=True)
+class Settings:
+    monitored_symbols: list[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "ZECUSDT"])
+    exchange_ids: tuple[str, ...] = EXCHANGE_IDS
+    market_scan: bool = True
+    max_candidate_symbols: int = 10
+    funding_levels: dict[str, float] = field(default_factory=lambda: dict(FUNDING_LEVELS))
+    volume_timeframe: str = "15m"
+    volume_prev_bars: int = 8
+    check_interval_seconds: int = 45
+    alert_cooldown_seconds: int = 15 * 60
+    l4_cooldown_seconds: int = 5 * 60
+    min_alert_level: str = "L3"
+    sqlite_path: Path = Path("data/sentinel.sqlite3")
+    tg_bot_token: str = ""
+    tg_chat_id: str = ""
+    tg_parse_mode: str = "Markdown"
+    dry_run: bool = False
+
+    @property
+    def min_alert_rank(self) -> int:
+        return level_rank(self.min_alert_level)
+
+
+def load_settings() -> Settings:
+    load_dotenv()
+    return Settings(
+        monitored_symbols=_csv("MONITORED_SYMBOLS", ["BTCUSDT", "ETHUSDT", "ZECUSDT"]),
+        market_scan=_bool("MARKET_SCAN", True),
+        max_candidate_symbols=_int("MAX_CANDIDATE_SYMBOLS", 10),
+        check_interval_seconds=_int("CHECK_INTERVAL_SECONDS", 45),
+        alert_cooldown_seconds=_int("ALERT_COOLDOWN_SECONDS", 15 * 60),
+        l4_cooldown_seconds=_int("L4_COOLDOWN_SECONDS", 5 * 60),
+        sqlite_path=Path(os.getenv("SQLITE_PATH", "data/sentinel.sqlite3")),
+        min_alert_level=os.getenv("MIN_ALERT_LEVEL", "L3"),
+        tg_bot_token=os.getenv("TG_BOT_TOKEN", ""),
+        tg_chat_id=os.getenv("TG_CHAT_ID", ""),
+        dry_run=_bool("DRY_RUN", False),
+    )
+
+
+def compact_to_swap_symbol(symbol: str) -> str:
+    normalized = symbol.upper().replace("-", "").replace("/", "").replace(":", "")
+    if not normalized.endswith("USDT"):
+        raise ValueError(f"Only USDT swap symbols are supported by default: {symbol}")
+    base = normalized[:-4]
+    return f"{base}/USDT:USDT"
+
+
+def load_dotenv(path: Path = Path(".env")) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+def level_rank(level: str | None) -> int:
+    if not level:
+        return 0
+    return {"L1": 1, "L2": 2, "L3": 3, "L4": 4}.get(level, 0)
+
+
+def funding_level(value: float, levels: dict[str, float] | None = None) -> str | None:
+    thresholds = levels or FUNDING_LEVELS
+    abs_value = abs(value)
+    result: str | None = None
+    for level, threshold in thresholds.items():
+        if abs_value >= threshold:
+            result = level
+    return result
+
+
+def funding_direction(value: float) -> str:
+    if value > 0:
+        return "positive"
+    if value < 0:
+        return "negative"
+    return "neutral"
+
+
+def volume_level(ratio: float | None) -> str:
+    if ratio is None:
+        return "unknown"
+    for name, lower, upper in VOLUME_LEVELS:
+        if lower is not None and ratio < lower:
+            continue
+        if upper is not None and ratio >= upper:
+            continue
+        return name
+    return "unknown"
+
+
+def _csv(key: str, default: list[str]) -> list[str]:
+    raw = os.getenv(key)
+    if not raw:
+        return default
+    return [item.strip().upper() for item in raw.split(",") if item.strip()]
+
+
+def _int(key: str, default: int) -> int:
+    raw = os.getenv(key)
+    return int(raw) if raw else default
+
+
+def _bool(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on"}

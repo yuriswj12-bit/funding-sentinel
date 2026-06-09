@@ -1,0 +1,349 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import Any
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from funding_sentinel.config import funding_direction, funding_level, volume_level
+from funding_sentinel.models import FundingSnapshot, VolumeSnapshot, utc_now
+from funding_sentinel.utils.time import from_ms
+
+logger = logging.getLogger(__name__)
+
+
+class CcxtExchangeClient:
+    """Public REST client.
+
+    The class name is kept so the rest of the app does not change. Direct REST is
+    used because ccxt market loading can be slow or fail when an exchange tries
+    to preload unrelated spot/option markets.
+    """
+
+    def __init__(self, exchange_id: str, funding_levels: dict[str, float]) -> None:
+        self.exchange_id = exchange_id
+        self.funding_levels = funding_levels
+
+    async def close(self) -> None:
+        return None
+
+    async def fetch_funding_snapshot(self, compact_symbol: str) -> FundingSnapshot:
+        raw = await asyncio.to_thread(_fetch_funding, self.exchange_id, compact_symbol)
+        return self._funding_snapshot_from_raw(compact_symbol, raw)
+
+    async def fetch_market_funding_snapshots(self) -> list[FundingSnapshot]:
+        raws = await asyncio.to_thread(_fetch_market_funding, self.exchange_id)
+        return [self._funding_snapshot_from_raw(raw["compact_symbol"], raw) for raw in raws]
+
+    async def fetch_market_symbols(self) -> set[str]:
+        return await asyncio.to_thread(_fetch_market_symbols, self.exchange_id)
+
+    def _funding_snapshot_from_raw(self, compact_symbol: str, raw: dict[str, Any]) -> FundingSnapshot:
+        rate = raw["funding_rate"]
+        return FundingSnapshot(
+            exchange_id=self.exchange_id,
+            compact_symbol=compact_symbol,
+            ccxt_symbol=raw["venue_symbol"],
+            funding_rate=rate,
+            funding_source=raw["funding_source"],
+            next_funding_time=from_ms(raw.get("next_funding_time")),
+            mark_price=raw.get("mark_price"),
+            timestamp=from_ms(raw.get("timestamp")) or utc_now(),
+            level=funding_level(rate, self.funding_levels),
+            direction=funding_direction(rate),
+        )
+
+    async def fetch_volume_snapshot(
+        self,
+        compact_symbol: str,
+        timeframe: str,
+        previous_bars: int,
+    ) -> VolumeSnapshot:
+        rows = await asyncio.to_thread(_fetch_ohlcv, self.exchange_id, compact_symbol, timeframe, previous_bars + 1)
+        timestamp = utc_now()
+        if len(rows) < previous_bars + 1:
+            return VolumeSnapshot(
+                exchange_id=self.exchange_id,
+                compact_symbol=compact_symbol,
+                ccxt_symbol=_venue_symbol(self.exchange_id, compact_symbol),
+                timeframe=timeframe,
+                current_volume=None,
+                previous_average_volume=None,
+                volume_ratio=None,
+                volume_level="insufficient_data",
+                candle_timestamp=None,
+                timestamp=timestamp,
+            )
+
+        rows = sorted(rows, key=lambda row: row["timestamp"])
+        current = rows[-1]
+        previous = rows[-(previous_bars + 1) : -1]
+        current_volume = current["volume"]
+        adjusted_current_volume = _progress_adjusted_volume(
+            current_volume,
+            current["timestamp"],
+            timeframe,
+            timestamp,
+        )
+        previous_volumes = [row["volume"] for row in previous if row["volume"] is not None]
+        previous_average = sum(previous_volumes) / len(previous_volumes) if previous_volumes else None
+        ratio = adjusted_current_volume / previous_average if adjusted_current_volume is not None and previous_average else None
+
+        return VolumeSnapshot(
+            exchange_id=self.exchange_id,
+            compact_symbol=compact_symbol,
+            ccxt_symbol=_venue_symbol(self.exchange_id, compact_symbol),
+            timeframe=timeframe,
+            current_volume=current_volume,
+            previous_average_volume=previous_average,
+            volume_ratio=ratio,
+            volume_level=volume_level(ratio),
+            candle_timestamp=from_ms(current["timestamp"]),
+            timestamp=timestamp,
+        )
+
+
+async def close_all(clients: list[CcxtExchangeClient]) -> None:
+    await asyncio.gather(*(client.close() for client in clients), return_exceptions=True)
+
+
+def _fetch_funding(exchange_id: str, compact_symbol: str) -> dict[str, Any]:
+    if exchange_id == "binanceusdm":
+        data = _get_json("https://fapi.binance.com/fapi/v1/premiumIndex", {"symbol": compact_symbol})
+        return {
+            "venue_symbol": compact_symbol,
+            "funding_rate": _float(data["lastFundingRate"]),
+            "funding_source": "current",
+            "next_funding_time": _int(data.get("nextFundingTime")),
+            "mark_price": _float(data.get("markPrice")),
+            "timestamp": _int(data.get("time")),
+        }
+
+    if exchange_id == "okx":
+        venue_symbol = _venue_symbol(exchange_id, compact_symbol)
+        data = _get_json("https://www.okx.com/api/v5/public/funding-rate", {"instId": venue_symbol})
+        item = data["data"][0]
+        next_rate = _float(item.get("nextFundingRate"))
+        current_rate = _float(item["fundingRate"])
+        return {
+            "venue_symbol": venue_symbol,
+            "funding_rate": next_rate if next_rate is not None else current_rate,
+            "funding_source": "predicted" if next_rate is not None else "current",
+            "next_funding_time": _int(item.get("nextFundingTime") or item.get("fundingTime")),
+            "mark_price": None,
+            "timestamp": _int(item.get("ts")),
+        }
+
+    if exchange_id == "bitget":
+        data = _get_json(
+            "https://api.bitget.com/api/v2/mix/market/current-fund-rate",
+            {"symbol": compact_symbol, "productType": "USDT-FUTURES"},
+        )
+        item = data["data"][0]
+        return {
+            "venue_symbol": compact_symbol,
+            "funding_rate": _float(item["fundingRate"]),
+            "funding_source": "current",
+            "next_funding_time": _int(item.get("nextUpdate")),
+            "mark_price": None,
+            "timestamp": _int(data.get("requestTime")),
+        }
+
+    if exchange_id == "bybit":
+        data = _get_json(
+            "https://api.bybit.com/v5/market/tickers",
+            {"category": "linear", "symbol": compact_symbol},
+        )
+        item = data["result"]["list"][0]
+        return {
+            "venue_symbol": compact_symbol,
+            "funding_rate": _float(item["fundingRate"]),
+            "funding_source": "current",
+            "next_funding_time": _int(item.get("nextFundingTime")),
+            "mark_price": _float(item.get("markPrice")),
+            "timestamp": _int(data.get("time")),
+        }
+
+    raise ValueError(f"Unsupported exchange: {exchange_id}")
+
+
+def _fetch_market_funding(exchange_id: str) -> list[dict[str, Any]]:
+    if exchange_id == "binanceusdm":
+        data = _get_json("https://fapi.binance.com/fapi/v1/premiumIndex", {})
+        return [
+            {
+                "compact_symbol": item["symbol"],
+                "venue_symbol": item["symbol"],
+                "funding_rate": _float(item["lastFundingRate"]),
+                "funding_source": "current",
+                "next_funding_time": _int(item.get("nextFundingTime")),
+                "mark_price": _float(item.get("markPrice")),
+                "timestamp": _int(item.get("time")),
+            }
+            for item in data
+            if str(item.get("symbol", "")).endswith("USDT") and _float(item.get("lastFundingRate")) is not None
+        ]
+
+    if exchange_id == "bybit":
+        data = _get_json("https://api.bybit.com/v5/market/tickers", {"category": "linear"})
+        return [
+            {
+                "compact_symbol": item["symbol"],
+                "venue_symbol": item["symbol"],
+                "funding_rate": _float(item["fundingRate"]),
+                "funding_source": "current",
+                "next_funding_time": _int(item.get("nextFundingTime")),
+                "mark_price": _float(item.get("markPrice")),
+                "timestamp": _int(data.get("time")),
+            }
+            for item in data["result"]["list"]
+            if str(item.get("symbol", "")).endswith("USDT") and _float(item.get("fundingRate")) is not None
+        ]
+
+    if exchange_id == "bitget":
+        data = _get_json(
+            "https://api.bitget.com/api/v2/mix/market/current-fund-rate",
+            {"productType": "USDT-FUTURES"},
+        )
+        return [
+            {
+                "compact_symbol": item["symbol"],
+                "venue_symbol": item["symbol"],
+                "funding_rate": _float(item["fundingRate"]),
+                "funding_source": "current",
+                "next_funding_time": _int(item.get("nextUpdate")),
+                "mark_price": None,
+                "timestamp": _int(data.get("requestTime")),
+            }
+            for item in data["data"]
+            if str(item.get("symbol", "")).endswith("USDT") and _float(item.get("fundingRate")) is not None
+        ]
+
+    return []
+
+
+def _fetch_market_symbols(exchange_id: str) -> set[str]:
+    if exchange_id in {"binanceusdm", "bybit", "bitget"}:
+        return {item["compact_symbol"] for item in _fetch_market_funding(exchange_id)}
+
+    if exchange_id == "okx":
+        data = _get_json("https://www.okx.com/api/v5/public/instruments", {"instType": "SWAP"})
+        symbols: set[str] = set()
+        for item in data["data"]:
+            inst_id = str(item.get("instId", ""))
+            if item.get("state") != "live":
+                continue
+            if not inst_id.endswith("-USDT-SWAP"):
+                continue
+            symbols.add(inst_id.replace("-USDT-SWAP", "USDT"))
+        return symbols
+
+    return set()
+
+
+def _fetch_ohlcv(exchange_id: str, compact_symbol: str, timeframe: str, limit: int) -> list[dict[str, float | int]]:
+    if exchange_id == "binanceusdm":
+        data = _get_json(
+            "https://fapi.binance.com/fapi/v1/klines",
+            {"symbol": compact_symbol, "interval": _binance_interval(timeframe), "limit": limit},
+        )
+        return [{"timestamp": _int(row[0]), "volume": _float(row[5])} for row in data]
+
+    if exchange_id == "okx":
+        venue_symbol = _venue_symbol(exchange_id, compact_symbol)
+        data = _get_json(
+            "https://www.okx.com/api/v5/market/candles",
+            {"instId": venue_symbol, "bar": timeframe, "limit": limit},
+        )
+        return [{"timestamp": _int(row[0]), "volume": _float(row[5])} for row in data["data"]]
+
+    if exchange_id == "bitget":
+        data = _get_json(
+            "https://api.bitget.com/api/v2/mix/market/candles",
+            {
+                "symbol": compact_symbol,
+                "productType": "USDT-FUTURES",
+                "granularity": timeframe,
+                "limit": limit,
+            },
+        )
+        return [{"timestamp": _int(row[0]), "volume": _float(row[5])} for row in data["data"]]
+
+    if exchange_id == "bybit":
+        data = _get_json(
+            "https://api.bybit.com/v5/market/kline",
+            {"category": "linear", "symbol": compact_symbol, "interval": _bybit_interval(timeframe), "limit": limit},
+        )
+        return [{"timestamp": _int(row[0]), "volume": _float(row[5])} for row in data["result"]["list"]]
+
+    raise ValueError(f"Unsupported exchange: {exchange_id}")
+
+
+def _get_json(url: str, params: dict[str, Any]) -> Any:
+    query = urlencode(params)
+    full_url = f"{url}?{query}" if query else url
+    request = Request(full_url, headers={"User-Agent": "funding-sentinel/0.1"})
+    with urlopen(request, timeout=20) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body)
+
+
+def _venue_symbol(exchange_id: str, compact_symbol: str) -> str:
+    if exchange_id == "okx":
+        if not compact_symbol.endswith("USDT"):
+            raise ValueError(f"Only USDT swaps are supported: {compact_symbol}")
+        return f"{compact_symbol[:-4]}-USDT-SWAP"
+    return compact_symbol
+
+
+def _binance_interval(timeframe: str) -> str:
+    return timeframe
+
+
+def _bybit_interval(timeframe: str) -> str:
+    if timeframe.endswith("m"):
+        return timeframe[:-1]
+    if timeframe.endswith("h"):
+        return str(int(timeframe[:-1]) * 60)
+    return timeframe
+
+
+def _progress_adjusted_volume(
+    current_volume: float | None,
+    candle_timestamp: int | None,
+    timeframe: str,
+    now,
+) -> float | None:
+    if current_volume is None or candle_timestamp is None:
+        return current_volume
+    duration_ms = _timeframe_ms(timeframe)
+    if not duration_ms:
+        return current_volume
+    now_ms = int(now.timestamp() * 1000)
+    elapsed_ms = now_ms - candle_timestamp
+    if elapsed_ms <= 0 or elapsed_ms >= duration_ms:
+        return current_volume
+    progress = max(elapsed_ms / duration_ms, 0.1)
+    return current_volume / progress
+
+
+def _timeframe_ms(timeframe: str) -> int | None:
+    if timeframe.endswith("m"):
+        return int(timeframe[:-1]) * 60 * 1000
+    if timeframe.endswith("h"):
+        return int(timeframe[:-1]) * 60 * 60 * 1000
+    return None
+
+
+def _float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def _int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(float(value))
