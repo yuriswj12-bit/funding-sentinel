@@ -22,14 +22,17 @@ class StorageTests(unittest.TestCase):
             self.assertTrue(storage.should_send_alert(upgraded, cooldown_seconds=900, l4_cooldown_seconds=300))
             storage.close()
 
-    def test_l4_shorter_cooldown(self) -> None:
+    def test_l4_uses_45_minute_cooldown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             storage = Storage(Path(tmp) / "sentinel.sqlite3")
             first = _alert("L4", datetime(2026, 1, 1, tzinfo=UTC))
             storage.mark_alert_sent(first, delivered=True)
 
-            repeated = _alert("L4", datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=301))
-            self.assertTrue(storage.should_send_alert(repeated, cooldown_seconds=900, l4_cooldown_seconds=300))
+            repeated = _alert("L4", datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=44))
+            self.assertFalse(storage.should_send_alert(repeated, cooldown_seconds=2700, l4_cooldown_seconds=2700))
+
+            cooled_down = _alert("L4", datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=45, seconds=1))
+            self.assertTrue(storage.should_send_alert(cooled_down, cooldown_seconds=2700, l4_cooldown_seconds=2700))
             storage.close()
 
 

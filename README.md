@@ -57,6 +57,9 @@ logged and stored but not pushed.
   - `REPORT_INTERVAL_HOURS=12`
   - `REPORT_WINDOW_HOURS=12`
   - `REPORT_TOP_N=10`
+- Alert cooldown defaults:
+  - `ALERT_COOLDOWN_SECONDS=2700`
+  - `L4_COOLDOWN_SECONDS=2700`
 - Volume comparisons are per exchange only. Absolute volume is not compared
   across exchanges because units can differ by venue.
 - Funding source is marked as `predicted` when a next funding value is available,

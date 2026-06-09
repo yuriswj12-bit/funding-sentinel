@@ -73,7 +73,7 @@ The cooldown key is:
 symbol + exchange + direction
 ```
 
-Default cooldown is 15 minutes. L4 cooldown is 5 minutes. A higher funding level
+Default cooldown is 45 minutes. L4 cooldown is 45 minutes. A higher funding level
 than the last sent level bypasses cooldown immediately.
 
 ## Periodic Report

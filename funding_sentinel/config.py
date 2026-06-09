@@ -58,8 +58,8 @@ class Settings:
     volume_timeframe: str = "15m"
     volume_prev_bars: int = 8
     check_interval_seconds: int = 45
-    alert_cooldown_seconds: int = 15 * 60
-    l4_cooldown_seconds: int = 5 * 60
+    alert_cooldown_seconds: int = 45 * 60
+    l4_cooldown_seconds: int = 45 * 60
     min_alert_level: str = "L3"
     sqlite_path: Path = Path("data/sentinel.sqlite3")
     tg_bot_token: str = ""
@@ -87,8 +87,8 @@ def load_settings() -> Settings:
         negative_funding_only=_bool("NEGATIVE_FUNDING_ONLY", True),
         exclude_tokenized_stocks=_bool("EXCLUDE_TOKENIZED_STOCKS", True),
         check_interval_seconds=_int("CHECK_INTERVAL_SECONDS", 45),
-        alert_cooldown_seconds=_int("ALERT_COOLDOWN_SECONDS", 15 * 60),
-        l4_cooldown_seconds=_int("L4_COOLDOWN_SECONDS", 5 * 60),
+        alert_cooldown_seconds=_int("ALERT_COOLDOWN_SECONDS", 45 * 60),
+        l4_cooldown_seconds=_int("L4_COOLDOWN_SECONDS", 45 * 60),
         sqlite_path=Path(os.getenv("SQLITE_PATH", "data/sentinel.sqlite3")),
         min_alert_level=os.getenv("MIN_ALERT_LEVEL", "L3"),
         tg_bot_token=os.getenv("TG_BOT_TOKEN", ""),
