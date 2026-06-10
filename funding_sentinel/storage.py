@@ -49,8 +49,9 @@ class Storage:
             INSERT INTO volume_snapshots (
                 timestamp, exchange_id, compact_symbol, ccxt_symbol, timeframe,
                 current_volume, previous_average_volume, volume_ratio,
+                raw_volume_ratio, adjusted_volume_ratio, candle_progress,
                 volume_level, candle_timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _dt(snapshot.timestamp),
@@ -61,6 +62,9 @@ class Storage:
                 snapshot.current_volume,
                 snapshot.previous_average_volume,
                 snapshot.volume_ratio,
+                snapshot.raw_volume_ratio,
+                snapshot.adjusted_volume_ratio,
+                snapshot.candle_progress,
                 snapshot.volume_level,
                 _dt(snapshot.candle_timestamp),
             ),
@@ -210,6 +214,9 @@ class Storage:
                 current_volume REAL,
                 previous_average_volume REAL,
                 volume_ratio REAL,
+                raw_volume_ratio REAL,
+                adjusted_volume_ratio REAL,
+                candle_progress REAL,
                 volume_level TEXT NOT NULL,
                 candle_timestamp TEXT
             );
@@ -256,6 +263,13 @@ class Storage:
         }
         if "volume_24h_usdt" not in columns:
             self.conn.execute("ALTER TABLE funding_snapshots ADD COLUMN volume_24h_usdt REAL")
+        volume_columns = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(volume_snapshots)").fetchall()
+        }
+        for column in ("raw_volume_ratio", "adjusted_volume_ratio", "candle_progress"):
+            if column not in volume_columns:
+                self.conn.execute(f"ALTER TABLE volume_snapshots ADD COLUMN {column} REAL")
         self.conn.commit()
 
 

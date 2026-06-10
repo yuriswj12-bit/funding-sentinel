@@ -83,15 +83,17 @@ class CcxtExchangeClient:
         current = rows[-1]
         previous = rows[-(previous_bars + 1) : -1]
         current_volume = current["volume"]
-        adjusted_current_volume = _progress_adjusted_volume(
-            current_volume,
-            current["timestamp"],
-            timeframe,
-            timestamp,
-        )
+        progress = _candle_progress(current["timestamp"], timeframe, timestamp)
+        adjusted_current_volume = _progress_adjusted_volume(current_volume, progress)
         previous_volumes = [row["volume"] for row in previous if row["volume"] is not None]
         previous_average = sum(previous_volumes) / len(previous_volumes) if previous_volumes else None
-        ratio = adjusted_current_volume / previous_average if adjusted_current_volume is not None and previous_average else None
+        raw_ratio = current_volume / previous_average if current_volume is not None and previous_average else None
+        adjusted_ratio = (
+            adjusted_current_volume / previous_average
+            if adjusted_current_volume is not None and previous_average
+            else None
+        )
+        ratio = _confirmation_volume_ratio(raw_ratio, adjusted_ratio, progress)
 
         return VolumeSnapshot(
             exchange_id=self.exchange_id,
@@ -104,6 +106,9 @@ class CcxtExchangeClient:
             volume_level=volume_level(ratio),
             candle_timestamp=from_ms(current["timestamp"]),
             timestamp=timestamp,
+            raw_volume_ratio=raw_ratio,
+            adjusted_volume_ratio=adjusted_ratio,
+            candle_progress=progress,
         )
 
 
@@ -367,23 +372,39 @@ def _bybit_interval(timeframe: str) -> str:
     return timeframe
 
 
-def _progress_adjusted_volume(
-    current_volume: float | None,
-    candle_timestamp: int | None,
-    timeframe: str,
-    now,
-) -> float | None:
-    if current_volume is None or candle_timestamp is None:
+def _progress_adjusted_volume(current_volume: float | None, progress: float | None) -> float | None:
+    if current_volume is None or progress is None:
         return current_volume
+    return current_volume / max(progress, 0.1)
+
+
+def _candle_progress(candle_timestamp: int | None, timeframe: str, now) -> float | None:
+    if candle_timestamp is None:
+        return None
     duration_ms = _timeframe_ms(timeframe)
     if not duration_ms:
-        return current_volume
+        return None
     now_ms = int(now.timestamp() * 1000)
     elapsed_ms = now_ms - candle_timestamp
-    if elapsed_ms <= 0 or elapsed_ms >= duration_ms:
-        return current_volume
-    progress = max(elapsed_ms / duration_ms, 0.1)
-    return current_volume / progress
+    if elapsed_ms <= 0:
+        return 0.0
+    if elapsed_ms >= duration_ms:
+        return 1.0
+    return elapsed_ms / duration_ms
+
+
+def _confirmation_volume_ratio(
+    raw_ratio: float | None,
+    adjusted_ratio: float | None,
+    progress: float | None,
+) -> float | None:
+    if raw_ratio is None:
+        return None
+    if adjusted_ratio is None or progress is None:
+        return raw_ratio
+    if progress >= 0.5 or raw_ratio >= 1.2:
+        return adjusted_ratio
+    return raw_ratio
 
 
 def _timeframe_ms(timeframe: str) -> int | None:

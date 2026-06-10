@@ -9,6 +9,7 @@ from funding_sentinel.config import (
     is_tokenized_stock_symbol,
     volume_level,
 )
+from funding_sentinel.exchanges.ccxt_client import _confirmation_volume_ratio
 from funding_sentinel.main import _passes_24h_volume_filter
 from funding_sentinel.models import ExchangeSignal, FundingSnapshot, VolumeSnapshot
 
@@ -84,6 +85,11 @@ class RuleTests(unittest.TestCase):
         alerts = build_alerts(confirmed_volume, min_level_rank=1)
         self.assertEqual(len(alerts), 1)
         self.assertIn("volume_confirmed", alerts[0].signal_tags)
+
+    def test_early_candle_volume_confirmation_is_conservative(self) -> None:
+        self.assertEqual(_confirmation_volume_ratio(0.8, 2.4, 0.33), 0.8)
+        self.assertEqual(_confirmation_volume_ratio(1.2, 3.6, 0.33), 3.6)
+        self.assertEqual(_confirmation_volume_ratio(0.8, 1.6, 0.5), 1.6)
 
 
 def _signal(exchange_id: str, symbol: str, rate: float, ratio: float) -> ExchangeSignal:

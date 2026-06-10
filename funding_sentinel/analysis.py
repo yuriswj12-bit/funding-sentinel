@@ -172,7 +172,7 @@ def _volume_summary(ranked: list[ExchangeSignal]) -> str:
         "normal": "整体正常，未形成放量确认",
         "unknown": "数据不足，未形成放量确认",
     }[state]
-    return f"量能：最大量比 {max_ratio:.2f}x，{state_text}"
+    return f"量能：确认量比 {max_ratio:.2f}x，{state_text}"
 
 
 def _trigger_title(level: str, tags: tuple[str, ...]) -> str:
@@ -205,7 +205,7 @@ def format_alert_message(
     for item in sorted(all_signals, key=lambda value: value.funding.exchange_id):
         rate_pct = item.funding.funding_rate * 100
         level = item.funding.level or "L0"
-        vol_ratio = "n/a" if not item.volume or item.volume.volume_ratio is None else f"{item.volume.volume_ratio:.2f}x"
+        vol_ratio = _format_volume_ratio(item.volume)
         direction = _zh_direction(item.funding.direction)
         volume_state = _zh_volume_level(item.volume.volume_level) if item.volume else "未知"
         exchange_lines.append(
@@ -266,6 +266,23 @@ def _exchange_name(value: str) -> str:
         "bybit": "Bybit",
         "multi": "多平台",
     }.get(value, value)
+
+
+def _format_volume_ratio(volume) -> str:
+    if not volume or volume.volume_ratio is None:
+        return "n/a"
+    base = f"{volume.volume_ratio:.2f}x"
+    if (
+        volume.raw_volume_ratio is not None
+        and volume.adjusted_volume_ratio is not None
+        and abs(volume.adjusted_volume_ratio - volume.raw_volume_ratio) >= 0.2
+    ):
+        progress = "" if volume.candle_progress is None else f", 进度 {volume.candle_progress * 100:.0f}%"
+        return (
+            f"{base} 确认"
+            f"（原始 {volume.raw_volume_ratio:.2f}x, 预估 {volume.adjusted_volume_ratio:.2f}x{progress}）"
+        )
+    return base
 
 
 def _zh_direction(value: str) -> str:

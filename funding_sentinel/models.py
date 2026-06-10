@@ -35,6 +35,9 @@ class VolumeSnapshot:
     volume_level: str
     candle_timestamp: datetime | None
     timestamp: datetime
+    raw_volume_ratio: float | None = None
+    adjusted_volume_ratio: float | None = None
+    candle_progress: float | None = None
 
 
 @dataclass(frozen=True)
