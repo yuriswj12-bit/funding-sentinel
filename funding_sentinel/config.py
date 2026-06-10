@@ -52,9 +52,9 @@ class Settings:
     monitored_symbols: list[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "ZECUSDT"])
     exchange_ids: tuple[str, ...] = EXCHANGE_IDS
     market_scan: bool = True
-    max_candidate_symbols: int = 30
+    max_candidate_symbols: int = 50
     min_24h_volume_usdt: float = 5_000_000
-    prefer_negative_funding: bool = True
+    prefer_negative_funding: bool = False
     negative_funding_only: bool = False
     exclude_tokenized_stocks: bool = True
     funding_levels: dict[str, float] = field(default_factory=lambda: dict(FUNDING_LEVELS))
@@ -84,9 +84,9 @@ def load_settings() -> Settings:
     return Settings(
         monitored_symbols=_csv("MONITORED_SYMBOLS", ["BTCUSDT", "ETHUSDT", "ZECUSDT"]),
         market_scan=_bool("MARKET_SCAN", True),
-        max_candidate_symbols=_int("MAX_CANDIDATE_SYMBOLS", 30),
+        max_candidate_symbols=_int("MAX_CANDIDATE_SYMBOLS", 50),
         min_24h_volume_usdt=_float_env("MIN_24H_VOLUME_USDT", 5_000_000),
-        prefer_negative_funding=_bool("PREFER_NEGATIVE_FUNDING", True),
+        prefer_negative_funding=_bool("PREFER_NEGATIVE_FUNDING", False),
         negative_funding_only=_bool("NEGATIVE_FUNDING_ONLY", False),
         exclude_tokenized_stocks=_bool("EXCLUDE_TOKENIZED_STOCKS", True),
         check_interval_seconds=_int("CHECK_INTERVAL_SECONDS", 45),

@@ -44,7 +44,10 @@ class RuleTests(unittest.TestCase):
         self.assertFalse(_passes_24h_volume_filter(_funding("SENTUSDT", -0.01, None), settings))
 
     def test_settings_default_to_include_positive_and_negative_funding(self) -> None:
-        self.assertFalse(Settings().negative_funding_only)
+        settings = Settings()
+        self.assertFalse(settings.negative_funding_only)
+        self.assertFalse(settings.prefer_negative_funding)
+        self.assertEqual(settings.max_candidate_symbols, 50)
 
     def test_alert_detects_single_exchange_extreme(self) -> None:
         signals = [

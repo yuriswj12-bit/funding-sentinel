@@ -205,6 +205,8 @@ async def _discover_market_candidates(
         len(sorted_symbols),
         len(severity_by_symbol),
     )
+    if sorted_symbols:
+        logger.info("Market candidates: %s", ", ".join(sorted_symbols))
     return sorted_symbols, funding_cache, supported_symbols
 
 
