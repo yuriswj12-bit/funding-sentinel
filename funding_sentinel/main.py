@@ -5,11 +5,12 @@ import argparse
 import logging
 import signal
 from contextlib import suppress
+from dataclasses import replace
 
 from funding_sentinel.analysis import build_alerts
 from funding_sentinel.config import Settings, is_tokenized_stock_symbol, level_rank, load_settings
 from funding_sentinel.exchanges.ccxt_client import CcxtExchangeClient, close_all
-from funding_sentinel.models import ExchangeSignal, FundingSnapshot, utc_now
+from funding_sentinel.models import Alert, ExchangeSignal, FundingSnapshot, utc_now
 from funding_sentinel.notifier import TelegramNotifier
 from funding_sentinel.report import maybe_build_periodic_report
 from funding_sentinel.storage import Storage
@@ -95,8 +96,11 @@ async def run_once(
     logger.info("Scan produced %s signals and %s candidate alerts", len(signals), len(alerts))
 
     for alert in alerts:
+        is_volume_upgrade = storage.is_volume_confirmation_upgrade(alert)
         if not storage.should_send_alert(alert, settings.alert_cooldown_seconds, settings.l4_cooldown_seconds):
             continue
+        if is_volume_upgrade:
+            alert = _with_volume_upgrade_notice(alert, settings.volume_timeframe)
         if settings.dry_run:
             logger.info("Dry-run alert:\n%s", alert.message)
             continue
@@ -216,6 +220,19 @@ def _passes_24h_volume_filter(snapshot: FundingSnapshot, settings: Settings) -> 
     if snapshot.volume_24h_usdt is None:
         return False
     return snapshot.volume_24h_usdt >= settings.min_24h_volume_usdt
+
+
+def _with_volume_upgrade_notice(alert: Alert, timeframe: str) -> Alert:
+    tags = tuple(dict.fromkeys((*alert.signal_tags, "volume_confirmation_upgrade")))
+    message = "\n".join(
+        [
+            f"🚨【重点关注：{timeframe} 放量确认升级】",
+            "上一条信号量能未确认，现在已出现放量确认，请重新检查价格结构和突破/跌破位置。",
+            "",
+            alert.message,
+        ]
+    )
+    return replace(alert, signal_tags=tags, message=message)
 
 
 def run() -> None:

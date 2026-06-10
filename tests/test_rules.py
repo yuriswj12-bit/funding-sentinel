@@ -47,7 +47,9 @@ class RuleTests(unittest.TestCase):
         settings = Settings()
         self.assertFalse(settings.negative_funding_only)
         self.assertFalse(settings.prefer_negative_funding)
-        self.assertEqual(settings.max_candidate_symbols, 50)
+        self.assertEqual(settings.max_candidate_symbols, 70)
+        self.assertEqual(settings.min_alert_level, "L1")
+        self.assertEqual(settings.volume_timeframe, "3m")
 
     def test_alert_detects_single_exchange_extreme(self) -> None:
         signals = [
@@ -65,14 +67,23 @@ class RuleTests(unittest.TestCase):
 
     def test_alert_detects_multi_exchange_sync(self) -> None:
         signals = [
-            _signal("binanceusdm", "BTCUSDT", -0.0005, 0.5),
-            _signal("okx", "BTCUSDT", -0.0004, 0.6),
+            _signal("binanceusdm", "BTCUSDT", -0.0008, 0.5),
+            _signal("okx", "BTCUSDT", -0.0009, 0.6),
         ]
         alerts = build_alerts(signals, min_level_rank=1)
         self.assertEqual(len(alerts), 1)
         self.assertEqual({alert.divergence_type for alert in alerts}, {"multi_exchange_sync"})
         self.assertEqual(alerts[0].fingerprint, "BTCUSDT:negative:multi_exchange_sync")
         self.assertEqual(alerts[0].volume_level, "clearly_contracted")
+
+    def test_l1_l2_need_volume_confirmation(self) -> None:
+        weak_volume = [_signal("binanceusdm", "SENTUSDT", 0.0003, 1.0)]
+        self.assertEqual(build_alerts(weak_volume, min_level_rank=1), [])
+
+        confirmed_volume = [_signal("binanceusdm", "SENTUSDT", 0.0003, 2.1)]
+        alerts = build_alerts(confirmed_volume, min_level_rank=1)
+        self.assertEqual(len(alerts), 1)
+        self.assertIn("volume_confirmed", alerts[0].signal_tags)
 
 
 def _signal(exchange_id: str, symbol: str, rate: float, ratio: float) -> ExchangeSignal:

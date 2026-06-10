@@ -52,18 +52,18 @@ class Settings:
     monitored_symbols: list[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "ZECUSDT"])
     exchange_ids: tuple[str, ...] = EXCHANGE_IDS
     market_scan: bool = True
-    max_candidate_symbols: int = 50
+    max_candidate_symbols: int = 70
     min_24h_volume_usdt: float = 5_000_000
     prefer_negative_funding: bool = False
     negative_funding_only: bool = False
     exclude_tokenized_stocks: bool = True
     funding_levels: dict[str, float] = field(default_factory=lambda: dict(FUNDING_LEVELS))
-    volume_timeframe: str = "15m"
+    volume_timeframe: str = "3m"
     volume_prev_bars: int = 8
     check_interval_seconds: int = 45
     alert_cooldown_seconds: int = 45 * 60
     l4_cooldown_seconds: int = 45 * 60
-    min_alert_level: str = "L3"
+    min_alert_level: str = "L1"
     sqlite_path: Path = Path("data/sentinel.sqlite3")
     tg_bot_token: str = ""
     tg_chat_id: str = ""
@@ -84,7 +84,7 @@ def load_settings() -> Settings:
     return Settings(
         monitored_symbols=_csv("MONITORED_SYMBOLS", ["BTCUSDT", "ETHUSDT", "ZECUSDT"]),
         market_scan=_bool("MARKET_SCAN", True),
-        max_candidate_symbols=_int("MAX_CANDIDATE_SYMBOLS", 50),
+        max_candidate_symbols=_int("MAX_CANDIDATE_SYMBOLS", 70),
         min_24h_volume_usdt=_float_env("MIN_24H_VOLUME_USDT", 5_000_000),
         prefer_negative_funding=_bool("PREFER_NEGATIVE_FUNDING", False),
         negative_funding_only=_bool("NEGATIVE_FUNDING_ONLY", False),
@@ -93,7 +93,8 @@ def load_settings() -> Settings:
         alert_cooldown_seconds=_int("ALERT_COOLDOWN_SECONDS", 45 * 60),
         l4_cooldown_seconds=_int("L4_COOLDOWN_SECONDS", 45 * 60),
         sqlite_path=Path(os.getenv("SQLITE_PATH", "data/sentinel.sqlite3")),
-        min_alert_level=os.getenv("MIN_ALERT_LEVEL", "L3"),
+        min_alert_level=os.getenv("MIN_ALERT_LEVEL", "L1"),
+        volume_timeframe=os.getenv("VOLUME_TIMEFRAME", "3m"),
         tg_bot_token=os.getenv("TG_BOT_TOKEN", ""),
         tg_chat_id=os.getenv("TG_CHAT_ID", ""),
         dry_run=_bool("DRY_RUN", False),

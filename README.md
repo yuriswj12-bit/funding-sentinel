@@ -11,7 +11,7 @@ not require exchange API keys.
 - Filters low-liquidity contracts with `MIN_24H_VOLUME_USDT`.
 - Excludes common tokenized stock symbols by default.
 - Computes L1-L4 funding severity in both positive and negative directions.
-- Compares the current 15m candle volume against the previous 8 candles.
+- Compares the current 3m candle volume against the previous 8 candles.
 - Detects single-exchange extremes, multi-exchange sync, direction conflicts,
   and volume-confirmed signals.
 - Writes funding, volume, and alert records to SQLite.
@@ -47,12 +47,13 @@ logged and stored but not pushed.
   and the system scans the broader USDT perpetual market for funding anomalies.
 - Set `MARKET_SCAN=false` to monitor only `MONITORED_SYMBOLS`.
 - Default market filters:
-  - `MIN_ALERT_LEVEL=L3`
+  - `MIN_ALERT_LEVEL=L1`
   - `MIN_24H_VOLUME_USDT=5000000`
-  - `MAX_CANDIDATE_SYMBOLS=50`
+  - `MAX_CANDIDATE_SYMBOLS=70`
   - `NEGATIVE_FUNDING_ONLY=false`
   - `PREFER_NEGATIVE_FUNDING=false`
   - `EXCLUDE_TOKENIZED_STOCKS=true`
+  - `VOLUME_TIMEFRAME=3m`
 - Periodic report defaults:
   - `REPORT_ENABLED=true`
   - `REPORT_INTERVAL_HOURS=12`
@@ -61,6 +62,8 @@ logged and stored but not pushed.
 - Alert cooldown defaults:
   - `ALERT_COOLDOWN_SECONDS=2700`
   - `L4_COOLDOWN_SECONDS=2700`
+- L1/L2 alerts are only sent when volume is confirmed. L3/L4 can alert before
+  volume confirmation, then send a follow-up when 3m volume confirms.
 - Volume comparisons are per exchange only. Absolute volume is not compared
   across exchanges because units can differ by venue.
 - Funding source is marked as `predicted` when a next funding value is available,

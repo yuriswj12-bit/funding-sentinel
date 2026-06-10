@@ -47,6 +47,8 @@ def _build_symbol_alert(
     )
     divergence_type = _symbol_divergence_type(primary, signals, extreme_by_direction, directions)
     tags = _symbol_tags(ranked, divergence_type)
+    if not _should_emit_alert(primary.funding.level, tags):
+        return None
     direction = _dominant_direction(ranked)
     volume_ratio = _max_volume_ratio(ranked)
     volume_name = _aggregate_volume_state(ranked)
@@ -108,6 +110,13 @@ def _symbol_tags(ranked: list[ExchangeSignal], divergence_type: str) -> tuple[st
     if any(level_rank(signal.funding.level) >= 4 for signal in ranked):
         tags.append("critical_funding")
     return tuple(tags)
+
+
+def _should_emit_alert(level: str | None, tags: tuple[str, ...]) -> bool:
+    rank = level_rank(level)
+    if rank >= 3:
+        return True
+    return "volume_confirmed" in tags
 
 
 def _dominant_direction(ranked: list[ExchangeSignal]) -> str:
