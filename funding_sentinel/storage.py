@@ -84,10 +84,30 @@ class Storage:
         last_level = row["last_level"]
         if level_rank(alert.level) > level_rank(last_level):
             return True
+        if self._is_volume_confirmation_upgrade(alert):
+            return True
 
         cooldown = l4_cooldown_seconds if alert.level == "L4" else cooldown_seconds
         elapsed = (alert.timestamp - last_sent_at).total_seconds()
         return elapsed >= cooldown
+
+    def _is_volume_confirmation_upgrade(self, alert: Alert) -> bool:
+        if "volume_confirmed" not in alert.signal_tags:
+            return False
+        row = self.conn.execute(
+            """
+            SELECT signal_tags
+            FROM alerts
+            WHERE fingerprint = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (alert.fingerprint,),
+        ).fetchone()
+        if row is None:
+            return True
+        previous_tags = {tag for tag in row["signal_tags"].split(",") if tag}
+        return "volume_confirmed" not in previous_tags
 
     def mark_alert_sent(self, alert: Alert, delivered: bool, error: str | None = None) -> None:
         self.conn.execute(
