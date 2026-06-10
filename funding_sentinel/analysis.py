@@ -23,6 +23,23 @@ def build_alerts(signals: list[ExchangeSignal], min_level_rank: int) -> list[Ale
     return alerts
 
 
+def build_15m_volume_spike_alerts(
+    signals: list[ExchangeSignal],
+    min_level_rank: int,
+    spike_threshold: float,
+) -> list[Alert]:
+    by_symbol: dict[str, list[ExchangeSignal]] = defaultdict(list)
+    for signal in signals:
+        by_symbol[signal.funding.compact_symbol].append(signal)
+
+    alerts: list[Alert] = []
+    for symbol, symbol_signals in by_symbol.items():
+        alert = _build_15m_volume_spike_alert(symbol, symbol_signals, min_level_rank, spike_threshold)
+        if alert:
+            alerts.append(alert)
+    return alerts
+
+
 def _build_symbol_alert(
     symbol: str,
     signals: list[ExchangeSignal],
@@ -68,6 +85,53 @@ def _build_symbol_alert(
         signal_tags=tags,
         message=message,
         fingerprint=fingerprint,
+        timestamp=utc_now(),
+    )
+
+
+def _build_15m_volume_spike_alert(
+    symbol: str,
+    signals: list[ExchangeSignal],
+    min_level_rank: int,
+    spike_threshold: float,
+) -> Alert | None:
+    ranked = [signal for signal in signals if level_rank(signal.funding.level) >= min_level_rank]
+    if not ranked:
+        return None
+
+    spike_signals = [
+        signal
+        for signal in signals
+        if _raw_volume_ratio(signal) is not None and _raw_volume_ratio(signal) >= spike_threshold
+    ]
+    if not spike_signals:
+        return None
+
+    primary = max(
+        ranked,
+        key=lambda signal: (
+            level_rank(signal.funding.level),
+            abs(signal.funding.funding_rate),
+            _raw_volume_ratio(signal) or 0,
+        ),
+    )
+    direction = _dominant_direction(ranked)
+    max_spike_ratio = max(_raw_volume_ratio(signal) or 0 for signal in spike_signals)
+    message = format_15m_volume_spike_message(primary, signals, ranked, spike_signals, spike_threshold)
+
+    return Alert(
+        compact_symbol=symbol,
+        exchange_id="multi",
+        level=primary.funding.level or "L0",
+        direction=direction,
+        funding_rate=primary.funding.funding_rate,
+        funding_source=primary.funding.funding_source,
+        volume_ratio=max_spike_ratio,
+        volume_level="highly_expanded",
+        divergence_type="15m_volume_spike",
+        signal_tags=("15m_volume_spike", "volume_confirmed"),
+        message=message,
+        fingerprint=f"{symbol}:{direction}:15m_volume_spike",
         timestamp=utc_now(),
     )
 
@@ -236,6 +300,54 @@ def format_alert_message(
     )
 
 
+def format_15m_volume_spike_message(
+    primary: ExchangeSignal,
+    all_signals: list[ExchangeSignal],
+    ranked: list[ExchangeSignal],
+    spike_signals: list[ExchangeSignal],
+    spike_threshold: float,
+) -> str:
+    signed_max_rate = _signed_max_funding_rate(ranked) * 100
+    max_spike_ratio = max(_raw_volume_ratio(signal) or 0 for signal in spike_signals)
+    hot_exchanges = ", ".join(_exchange_name(signal.funding.exchange_id) for signal in ranked)
+    spike_exchanges = ", ".join(_exchange_name(signal.funding.exchange_id) for signal in spike_signals)
+    event_time = utc_now().astimezone(CN_TZ).strftime("%Y-%m-%d %H:%M:%S CST")
+    exchange_lines = []
+
+    for item in sorted(all_signals, key=lambda value: value.funding.exchange_id):
+        rate_pct = item.funding.funding_rate * 100
+        level = item.funding.level or "L0"
+        raw_ratio = _raw_volume_ratio(item)
+        ratio_text = "n/a" if raw_ratio is None else f"{raw_ratio:.2f}x"
+        direction = _zh_direction(item.funding.direction)
+        spike_mark = " 15m巨量" if raw_ratio is not None and raw_ratio >= spike_threshold else ""
+        exchange_lines.append(
+            f"- {_exchange_name(item.funding.exchange_id)}: {rate_pct:+.4f}% {level} "
+            f"{direction}, 15m原始量比 {ratio_text}{spike_mark}"
+        )
+
+    return "\n".join(
+        [
+            "❗【15m 巨量异动告警】",
+            "",
+            f"币种：{primary.funding.compact_symbol}",
+            f"触发条件：资金费率异动 + 15m量比 >= {spike_threshold:.1f}x",
+            f"触发平台：{hot_exchanges}",
+            f"放量平台：{spike_exchanges}",
+            f"最大资金费率：{signed_max_rate:+.4f}%",
+            f"最大15m原始量比：{max_spike_ratio:.2f}x",
+            "",
+            "📊 多平台快照",
+            *exchange_lines,
+            "",
+            f"🕒 时间：{event_time}",
+            "💡 信号说明：资金费率已经进入异动区间，同时 15m K 线出现相对前 8 根均量的巨量放大，说明仓位成本和成交行为同时异常。",
+            "",
+            "⚠️ 观察建议：优先检查价格是否正在突破/跌破关键结构；若巨量发生在假突破或冲高回落位置，注意反向挤压风险。",
+        ]
+    )
+
+
 def _signal_explanation(divergence_type: str, direction: str, tags: tuple[str, ...]) -> str:
     direction_text = "负费率" if direction == "negative" else "正费率"
     if divergence_type == "multi_exchange_sync":
@@ -266,6 +378,14 @@ def _exchange_name(value: str) -> str:
         "bybit": "Bybit",
         "multi": "多平台",
     }.get(value, value)
+
+
+def _raw_volume_ratio(signal: ExchangeSignal) -> float | None:
+    if not signal.volume:
+        return None
+    if signal.volume.raw_volume_ratio is not None:
+        return signal.volume.raw_volume_ratio
+    return signal.volume.volume_ratio
 
 
 def _format_volume_ratio(volume) -> str:

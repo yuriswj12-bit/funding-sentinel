@@ -64,6 +64,9 @@ logged and stored but not pushed.
   - `L4_COOLDOWN_SECONDS=2700`
 - L1/L2 alerts are only sent when volume is confirmed. L3/L4 can alert before
   volume confirmation, then send a follow-up when 3m volume confirms.
+- A separate 15m spike alert is sent when funding is at L1-L4 and the raw
+  current 15m volume is at least 4x the previous 8 candles' average volume.
+  It uses its own 45-minute cooldown and starts with `❗`.
 - Volume comparisons are per exchange only. Absolute volume is not compared
   across exchanges because units can differ by venue.
 - Funding source is marked as `predicted` when a next funding value is available,

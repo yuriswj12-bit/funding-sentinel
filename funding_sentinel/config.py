@@ -25,19 +25,31 @@ EXCHANGE_IDS = ("binanceusdm", "okx", "bitget", "bybit")
 TOKENIZED_STOCK_BASES = {
     "AAPL",
     "AMZN",
+    "ARM",
     "AMD",
     "BABA",
+    "AVGO",
     "COIN",
     "CRCL",
     "CRWD",
+    "DELL",
     "GOOGL",
+    "HOOD",
+    "IBM",
+    "INTC",
     "META",
+    "MRVL",
     "MSFT",
     "MSTR",
+    "MU",
     "NFLX",
+    "ORCL",
+    "PLTR",
+    "QCOM",
     "NOKIA",
     "NVDA",
     "QQQ",
+    "SNDK",
     "SAMSUNG",
     "SKHYNIX",
     "SPY",
@@ -60,6 +72,9 @@ class Settings:
     funding_levels: dict[str, float] = field(default_factory=lambda: dict(FUNDING_LEVELS))
     volume_timeframe: str = "3m"
     volume_prev_bars: int = 8
+    spike_volume_timeframe: str = "15m"
+    spike_volume_prev_bars: int = 8
+    spike_volume_ratio_threshold: float = 4.0
     check_interval_seconds: int = 45
     alert_cooldown_seconds: int = 45 * 60
     l4_cooldown_seconds: int = 45 * 60
@@ -95,6 +110,9 @@ def load_settings() -> Settings:
         sqlite_path=Path(os.getenv("SQLITE_PATH", "data/sentinel.sqlite3")),
         min_alert_level=os.getenv("MIN_ALERT_LEVEL", "L1"),
         volume_timeframe=os.getenv("VOLUME_TIMEFRAME", "3m"),
+        spike_volume_timeframe=os.getenv("SPIKE_VOLUME_TIMEFRAME", "15m"),
+        spike_volume_prev_bars=_int("SPIKE_VOLUME_PREV_BARS", 8),
+        spike_volume_ratio_threshold=_float_env("SPIKE_VOLUME_RATIO_THRESHOLD", 4.0),
         tg_bot_token=os.getenv("TG_BOT_TOKEN", ""),
         tg_chat_id=os.getenv("TG_CHAT_ID", ""),
         dry_run=_bool("DRY_RUN", False),

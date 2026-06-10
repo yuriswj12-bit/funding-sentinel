@@ -7,7 +7,7 @@ import signal
 from contextlib import suppress
 from dataclasses import replace
 
-from funding_sentinel.analysis import build_alerts
+from funding_sentinel.analysis import build_15m_volume_spike_alerts, build_alerts
 from funding_sentinel.config import Settings, is_tokenized_stock_symbol, level_rank, load_settings
 from funding_sentinel.exchanges.ccxt_client import CcxtExchangeClient, close_all
 from funding_sentinel.models import Alert, ExchangeSignal, FundingSnapshot, utc_now
@@ -75,7 +75,7 @@ async def run_once(
         return
 
     tasks = [
-        _collect_signal(client, compact_symbol, settings, funding_cache)
+        _collect_signal(client, compact_symbol, settings.volume_timeframe, settings.volume_prev_bars, funding_cache)
         for compact_symbol in symbols
         for client in clients
         if compact_symbol in supported_symbols.get(client.exchange_id, set())
@@ -93,7 +93,19 @@ async def run_once(
             storage.insert_volume(result.volume)
 
     alerts = build_alerts(signals, settings.min_alert_rank)
-    logger.info("Scan produced %s signals and %s candidate alerts", len(signals), len(alerts))
+    spike_signals = await _collect_spike_signals(settings, clients, symbols, supported_symbols, funding_cache, storage)
+    spike_alerts = build_15m_volume_spike_alerts(
+        spike_signals,
+        settings.min_alert_rank,
+        settings.spike_volume_ratio_threshold,
+    )
+    alerts.extend(spike_alerts)
+    logger.info(
+        "Scan produced %s signals, %s spike signals, and %s candidate alerts",
+        len(signals),
+        len(spike_signals),
+        len(alerts),
+    )
 
     for alert in alerts:
         is_volume_upgrade = storage.is_volume_confirmation_upgrade(alert)
@@ -133,19 +145,54 @@ async def run_once(
 async def _collect_signal(
     client: CcxtExchangeClient,
     compact_symbol: str,
-    settings: Settings,
+    timeframe: str,
+    previous_bars: int,
     funding_cache: dict[tuple[str, str], FundingSnapshot] | None = None,
 ) -> ExchangeSignal:
     cached_funding = (funding_cache or {}).get((client.exchange_id, compact_symbol))
     if cached_funding:
         funding = cached_funding
-        volume = await client.fetch_volume_snapshot(compact_symbol, settings.volume_timeframe, settings.volume_prev_bars)
+        volume = await client.fetch_volume_snapshot(compact_symbol, timeframe, previous_bars)
     else:
         funding, volume = await asyncio.gather(
             client.fetch_funding_snapshot(compact_symbol),
-            client.fetch_volume_snapshot(compact_symbol, settings.volume_timeframe, settings.volume_prev_bars),
+            client.fetch_volume_snapshot(compact_symbol, timeframe, previous_bars),
         )
     return ExchangeSignal(funding=funding, volume=volume)
+
+
+async def _collect_spike_signals(
+    settings: Settings,
+    clients: list[CcxtExchangeClient],
+    symbols: list[str],
+    supported_symbols: dict[str, set[str]],
+    funding_cache: dict[tuple[str, str], FundingSnapshot],
+    storage: Storage,
+) -> list[ExchangeSignal]:
+    tasks = [
+        _collect_signal(
+            client,
+            compact_symbol,
+            settings.spike_volume_timeframe,
+            settings.spike_volume_prev_bars,
+            funding_cache,
+        )
+        for compact_symbol in symbols
+        for client in clients
+        if compact_symbol in supported_symbols.get(client.exchange_id, set())
+    ]
+    if not tasks:
+        return []
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    signals: list[ExchangeSignal] = []
+    for result in results:
+        if isinstance(result, Exception):
+            logger.warning("15m spike collection failed: %r", result)
+            continue
+        signals.append(result)
+        if result.volume:
+            storage.insert_volume(result.volume)
+    return signals
 
 
 async def _discover_market_candidates(

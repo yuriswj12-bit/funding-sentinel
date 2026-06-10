@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 import unittest
 
-from funding_sentinel.analysis import build_alerts
+from funding_sentinel.analysis import build_15m_volume_spike_alerts, build_alerts
 from funding_sentinel.config import (
     Settings,
     funding_direction,
@@ -36,6 +36,11 @@ class RuleTests(unittest.TestCase):
         self.assertTrue(is_tokenized_stock_symbol("TSLAUSDT"))
         self.assertTrue(is_tokenized_stock_symbol("CRWDUSDT"))
         self.assertTrue(is_tokenized_stock_symbol("AAOIUSDT"))
+        self.assertTrue(is_tokenized_stock_symbol("ARMUSDT"))
+        self.assertTrue(is_tokenized_stock_symbol("QCOMUSDT"))
+        self.assertTrue(is_tokenized_stock_symbol("DELLUSDT"))
+        self.assertTrue(is_tokenized_stock_symbol("MRVLUSDT"))
+        self.assertTrue(is_tokenized_stock_symbol("SNDKUSDT"))
         self.assertFalse(is_tokenized_stock_symbol("SENTUSDT"))
 
     def test_24h_volume_filter(self) -> None:
@@ -91,8 +96,28 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(_confirmation_volume_ratio(1.2, 3.6, 0.33), 3.6)
         self.assertEqual(_confirmation_volume_ratio(0.8, 1.6, 0.5), 1.6)
 
+    def test_15m_volume_spike_alert_needs_funding_and_raw_volume(self) -> None:
+        no_spike = [_signal("binanceusdm", "SENTUSDT", 0.0003, 3.9, raw_ratio=3.9)]
+        self.assertEqual(build_15m_volume_spike_alerts(no_spike, min_level_rank=1, spike_threshold=4.0), [])
 
-def _signal(exchange_id: str, symbol: str, rate: float, ratio: float) -> ExchangeSignal:
+        no_funding = [_signal("binanceusdm", "SENTUSDT", 0.0001, 5.0, raw_ratio=5.0)]
+        self.assertEqual(build_15m_volume_spike_alerts(no_funding, min_level_rank=1, spike_threshold=4.0), [])
+
+        spike = [_signal("binanceusdm", "SENTUSDT", 0.0003, 5.0, raw_ratio=5.0)]
+        alerts = build_15m_volume_spike_alerts(spike, min_level_rank=1, spike_threshold=4.0)
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0].divergence_type, "15m_volume_spike")
+        self.assertEqual(alerts[0].fingerprint, "SENTUSDT:positive:15m_volume_spike")
+        self.assertTrue(alerts[0].message.startswith("❗"))
+
+
+def _signal(
+    exchange_id: str,
+    symbol: str,
+    rate: float,
+    ratio: float,
+    raw_ratio: float | None = None,
+) -> ExchangeSignal:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     funding = _funding(symbol, rate, 10_000_000, exchange_id=exchange_id, now=now)
     volume = VolumeSnapshot(
@@ -106,6 +131,9 @@ def _signal(exchange_id: str, symbol: str, rate: float, ratio: float) -> Exchang
         volume_level=volume_level(ratio),
         candle_timestamp=now,
         timestamp=now,
+        raw_volume_ratio=raw_ratio,
+        adjusted_volume_ratio=ratio,
+        candle_progress=1.0,
     )
     return ExchangeSignal(funding=funding, volume=volume)
 
