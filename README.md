@@ -10,6 +10,7 @@ not require exchange API keys.
 - Uses Binance, OKX, Bybit, and Bitget public funding endpoints for market discovery.
 - Filters low-liquidity contracts with `MIN_24H_VOLUME_USDT`.
 - Excludes common tokenized stock symbols by default.
+- Excludes major spot-volume symbols and stablecoins by default.
 - Computes L1-L4 funding severity in both positive and negative directions.
 - Compares the current 3m candle volume against the previous 8 candles.
 - Detects single-exchange extremes, multi-exchange sync, direction conflicts,
@@ -53,6 +54,8 @@ logged and stored but not pushed.
   - `NEGATIVE_FUNDING_ONLY=false`
   - `PREFER_NEGATIVE_FUNDING=false`
   - `EXCLUDE_TOKENIZED_STOCKS=true`
+  - `EXCLUDE_MAJOR_SPOT_SYMBOLS=true`
+  - `EXCLUDE_STABLECOINS=true`
   - `VOLUME_TIMEFRAME=3m`
 - Periodic report defaults:
   - `REPORT_ENABLED=true`

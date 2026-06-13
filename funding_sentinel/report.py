@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from sqlite3 import Row
 from zoneinfo import ZoneInfo
 
-from funding_sentinel.config import is_tokenized_stock_symbol, level_rank
+from funding_sentinel.config import is_excluded_market_symbol, level_rank
 from funding_sentinel.storage import Storage
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
@@ -45,6 +45,8 @@ def maybe_build_periodic_report(
     min_level_rank: int,
     negative_funding_only: bool = True,
     exclude_tokenized_stocks: bool = True,
+    exclude_major_spot_symbols: bool = True,
+    exclude_stablecoins: bool = True,
     mark_sent: bool = True,
 ) -> str | None:
     interval_seconds = interval_hours * 60 * 60
@@ -61,7 +63,13 @@ def maybe_build_periodic_report(
     candidates = [
         candidate
         for candidate in (_row_to_candidate(row) for row in rows)
-        if _passes_report_filters(candidate, negative_funding_only, exclude_tokenized_stocks)
+        if _passes_report_filters(
+            candidate,
+            negative_funding_only,
+            exclude_tokenized_stocks,
+            exclude_major_spot_symbols,
+            exclude_stablecoins,
+        )
     ]
     if not candidates:
         return None
@@ -74,10 +82,17 @@ def _passes_report_filters(
     candidate: ReportCandidate,
     negative_funding_only: bool,
     exclude_tokenized_stocks: bool,
+    exclude_major_spot_symbols: bool,
+    exclude_stablecoins: bool,
 ) -> bool:
     if negative_funding_only and candidate.funding_rate >= 0:
         return False
-    if exclude_tokenized_stocks and is_tokenized_stock_symbol(candidate.compact_symbol):
+    if is_excluded_market_symbol(
+        candidate.compact_symbol,
+        exclude_tokenized_stocks=exclude_tokenized_stocks,
+        exclude_major_spot_symbols=exclude_major_spot_symbols,
+        exclude_stablecoins=exclude_stablecoins,
+    ):
         return False
     return True
 

@@ -50,6 +50,29 @@ class ReportTests(unittest.TestCase):
             self.assertTrue(storage.should_send_report(REPORT_NAME, 12 * 60 * 60, now + timedelta(minutes=1)))
             storage.close()
 
+    def test_periodic_report_filters_major_and_stable_symbols(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "sentinel.sqlite3")
+            now = datetime(2026, 1, 1, 12, tzinfo=UTC)
+            storage.mark_alert_sent(_alert("BTCUSDT", "L4", -0.006, 4.0, ("multi_exchange_sync",)), True)
+            storage.mark_alert_sent(_alert("USDCUSDT", "L4", -0.006, 4.0, ("multi_exchange_sync",)), True)
+            storage.mark_alert_sent(_alert("SENTUSDT", "L4", -0.006, 4.0, ("multi_exchange_sync",)), True)
+
+            report = maybe_build_periodic_report(
+                storage,
+                now=now,
+                interval_hours=12,
+                window_hours=12,
+                top_n=10,
+                min_level_rank=1,
+            )
+            self.assertIsNotNone(report)
+            assert report is not None
+            self.assertNotIn("BTCUSDT", report)
+            self.assertNotIn("USDCUSDT", report)
+            self.assertIn("SENTUSDT", report)
+            storage.close()
+
 
 def _alert(
     symbol: str,

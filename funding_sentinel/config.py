@@ -22,6 +22,38 @@ VOLUME_LEVELS: list[tuple[str, float | None, float | None]] = [
 ]
 
 EXCHANGE_IDS = ("binanceusdm", "okx", "bitget", "bybit")
+MAJOR_SPOT_BASES = {
+    "BTC",
+    "ETH",
+    "BNB",
+    "SOL",
+    "XRP",
+    "DOGE",
+    "ADA",
+    "TRX",
+    "LINK",
+    "BCH",
+    "LTC",
+    "AVAX",
+    "TON",
+    "DOT",
+    "SUI",
+    "XLM",
+}
+STABLECOIN_BASES = {
+    "USDC",
+    "FDUSD",
+    "USDE",
+    "TUSD",
+    "DAI",
+    "USDP",
+    "USDD",
+    "USD1",
+    "PYUSD",
+    "EURC",
+    "EURI",
+    "USTC",
+}
 TOKENIZED_STOCK_BASES = {
     "AAPL",
     "AMZN",
@@ -69,6 +101,8 @@ class Settings:
     prefer_negative_funding: bool = False
     negative_funding_only: bool = False
     exclude_tokenized_stocks: bool = True
+    exclude_major_spot_symbols: bool = True
+    exclude_stablecoins: bool = True
     funding_levels: dict[str, float] = field(default_factory=lambda: dict(FUNDING_LEVELS))
     volume_timeframe: str = "3m"
     volume_prev_bars: int = 8
@@ -110,6 +144,8 @@ def load_settings() -> Settings:
         prefer_negative_funding=_bool("PREFER_NEGATIVE_FUNDING", False),
         negative_funding_only=_bool("NEGATIVE_FUNDING_ONLY", False),
         exclude_tokenized_stocks=_bool("EXCLUDE_TOKENIZED_STOCKS", True),
+        exclude_major_spot_symbols=_bool("EXCLUDE_MAJOR_SPOT_SYMBOLS", True),
+        exclude_stablecoins=_bool("EXCLUDE_STABLECOINS", True),
         check_interval_seconds=_int("CHECK_INTERVAL_SECONDS", 45),
         alert_cooldown_seconds=_int("ALERT_COOLDOWN_SECONDS", 45 * 60),
         l4_cooldown_seconds=_int("L4_COOLDOWN_SECONDS", 45 * 60),
@@ -193,11 +229,41 @@ def volume_level(ratio: float | None) -> str:
 
 
 def is_tokenized_stock_symbol(symbol: str) -> bool:
+    base = symbol_base(symbol)
+    return base in TOKENIZED_STOCK_BASES
+
+
+def is_major_spot_symbol(symbol: str) -> bool:
+    base = symbol_base(symbol)
+    return base in MAJOR_SPOT_BASES
+
+
+def is_stablecoin_symbol(symbol: str) -> bool:
+    base = symbol_base(symbol)
+    return base in STABLECOIN_BASES
+
+
+def is_excluded_market_symbol(
+    symbol: str,
+    *,
+    exclude_tokenized_stocks: bool = True,
+    exclude_major_spot_symbols: bool = True,
+    exclude_stablecoins: bool = True,
+) -> bool:
+    if exclude_tokenized_stocks and is_tokenized_stock_symbol(symbol):
+        return True
+    if exclude_major_spot_symbols and is_major_spot_symbol(symbol):
+        return True
+    if exclude_stablecoins and is_stablecoin_symbol(symbol):
+        return True
+    return False
+
+
+def symbol_base(symbol: str) -> str:
     normalized = symbol.upper()
     if not normalized.endswith("USDT"):
-        return False
-    base = normalized[:-4]
-    return base in TOKENIZED_STOCK_BASES
+        return normalized
+    return normalized[:-4]
 
 
 def _csv(key: str, default: list[str]) -> list[str]:

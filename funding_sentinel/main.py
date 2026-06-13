@@ -8,7 +8,7 @@ from contextlib import suppress
 from dataclasses import replace
 
 from funding_sentinel.analysis import build_15m_volume_spike_alerts, build_alerts, build_stealth_volume_alerts
-from funding_sentinel.config import Settings, is_tokenized_stock_symbol, level_rank, load_settings
+from funding_sentinel.config import Settings, is_excluded_market_symbol, level_rank, load_settings
 from funding_sentinel.exchanges.ccxt_client import CcxtExchangeClient, close_all
 from funding_sentinel.models import Alert, ExchangeSignal, FundingSnapshot, utc_now
 from funding_sentinel.notifier import TelegramNotifier
@@ -153,6 +153,8 @@ async def run_once(
             min_level_rank=settings.min_alert_rank,
             negative_funding_only=settings.negative_funding_only,
             exclude_tokenized_stocks=settings.exclude_tokenized_stocks,
+            exclude_major_spot_symbols=settings.exclude_major_spot_symbols,
+            exclude_stablecoins=settings.exclude_stablecoins,
             mark_sent=not settings.dry_run,
         )
         if report:
@@ -305,7 +307,12 @@ async def _discover_market_candidates(
         logger.info("Discovered %s funding snapshots from %s", len(result), client.exchange_id)
         for snapshot in result:
             funding_cache[(client.exchange_id, snapshot.compact_symbol)] = snapshot
-            if settings.exclude_tokenized_stocks and is_tokenized_stock_symbol(snapshot.compact_symbol):
+            if is_excluded_market_symbol(
+                snapshot.compact_symbol,
+                exclude_tokenized_stocks=settings.exclude_tokenized_stocks,
+                exclude_major_spot_symbols=settings.exclude_major_spot_symbols,
+                exclude_stablecoins=settings.exclude_stablecoins,
+            ):
                 continue
             if settings.negative_funding_only and snapshot.funding_rate >= 0:
                 continue

@@ -6,6 +6,9 @@ from funding_sentinel.config import (
     Settings,
     funding_direction,
     funding_level,
+    is_excluded_market_symbol,
+    is_major_spot_symbol,
+    is_stablecoin_symbol,
     is_tokenized_stock_symbol,
     volume_level,
 )
@@ -42,6 +45,24 @@ class RuleTests(unittest.TestCase):
         self.assertTrue(is_tokenized_stock_symbol("MRVLUSDT"))
         self.assertTrue(is_tokenized_stock_symbol("SNDKUSDT"))
         self.assertFalse(is_tokenized_stock_symbol("SENTUSDT"))
+
+    def test_major_spot_and_stablecoin_filters(self) -> None:
+        self.assertTrue(is_major_spot_symbol("BTCUSDT"))
+        self.assertTrue(is_major_spot_symbol("ETHUSDT"))
+        self.assertTrue(is_major_spot_symbol("SOLUSDT"))
+        self.assertTrue(is_major_spot_symbol("TRXUSDT"))
+        self.assertTrue(is_major_spot_symbol("XLMUSDT"))
+        self.assertFalse(is_major_spot_symbol("SENTUSDT"))
+
+        self.assertTrue(is_stablecoin_symbol("USDCUSDT"))
+        self.assertTrue(is_stablecoin_symbol("FDUSDUSDT"))
+        self.assertTrue(is_stablecoin_symbol("USDEUSDT"))
+        self.assertFalse(is_stablecoin_symbol("SENTUSDT"))
+
+        self.assertTrue(is_excluded_market_symbol("BTCUSDT"))
+        self.assertTrue(is_excluded_market_symbol("USDCUSDT"))
+        self.assertTrue(is_excluded_market_symbol("AAPLUSDT"))
+        self.assertFalse(is_excluded_market_symbol("SENTUSDT"))
 
     def test_24h_volume_filter(self) -> None:
         settings = Settings(min_24h_volume_usdt=5_000_000)
