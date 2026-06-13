@@ -75,6 +75,12 @@ class Settings:
     spike_volume_timeframe: str = "15m"
     spike_volume_prev_bars: int = 8
     spike_volume_ratio_threshold: float = 4.0
+    stealth_volume_timeframe: str = "15m"
+    stealth_volume_prev_bars: int = 8
+    stealth_volume_ratio_threshold: float = 2.5
+    stealth_one_hour_volume_usdt: float = 5_000_000
+    stealth_trend_bars: int = 3
+    stealth_max_candidate_symbols: int = 60
     check_interval_seconds: int = 45
     alert_cooldown_seconds: int = 45 * 60
     l4_cooldown_seconds: int = 45 * 60
@@ -113,6 +119,12 @@ def load_settings() -> Settings:
         spike_volume_timeframe=os.getenv("SPIKE_VOLUME_TIMEFRAME", "15m"),
         spike_volume_prev_bars=_int("SPIKE_VOLUME_PREV_BARS", 8),
         spike_volume_ratio_threshold=_float_env("SPIKE_VOLUME_RATIO_THRESHOLD", 4.0),
+        stealth_volume_timeframe=os.getenv("STEALTH_VOLUME_TIMEFRAME", "15m"),
+        stealth_volume_prev_bars=_int("STEALTH_VOLUME_PREV_BARS", 8),
+        stealth_volume_ratio_threshold=_float_env("STEALTH_VOLUME_RATIO_THRESHOLD", 2.5),
+        stealth_one_hour_volume_usdt=_float_env("STEALTH_ONE_HOUR_VOLUME_USDT", 5_000_000),
+        stealth_trend_bars=_int("STEALTH_TREND_BARS", 3),
+        stealth_max_candidate_symbols=_int("STEALTH_MAX_CANDIDATE_SYMBOLS", 60),
         tg_bot_token=os.getenv("TG_BOT_TOKEN", ""),
         tg_chat_id=os.getenv("TG_CHAT_ID", ""),
         dry_run=_bool("DRY_RUN", False),

@@ -38,6 +38,8 @@ class VolumeSnapshot:
     raw_volume_ratio: float | None = None
     adjusted_volume_ratio: float | None = None
     candle_progress: float | None = None
+    one_hour_quote_volume: float | None = None
+    recent_volumes: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)

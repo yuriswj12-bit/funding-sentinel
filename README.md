@@ -67,6 +67,9 @@ logged and stored but not pushed.
 - A separate 15m spike alert is sent when funding is at L1-L4 and the raw
   current 15m volume is at least 4x the previous 8 candles' average volume.
   It uses its own 45-minute cooldown and starts with `❗`.
+- A stealth-volume alert is sent when funding is stable below L1, raw 15m
+  volume ratio is at least 2.5x, the latest 1h quote volume is at least
+  5M USDT, and the latest 3 candles' volume is increasing.
 - Volume comparisons are per exchange only. Absolute volume is not compared
   across exchanges because units can differ by venue.
 - Funding source is marked as `predicted` when a next funding value is available,

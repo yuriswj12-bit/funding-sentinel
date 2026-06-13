@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 import unittest
 
-from funding_sentinel.analysis import build_15m_volume_spike_alerts, build_alerts
+from funding_sentinel.analysis import build_15m_volume_spike_alerts, build_alerts, build_stealth_volume_alerts
 from funding_sentinel.config import (
     Settings,
     funding_direction,
@@ -110,6 +110,38 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(alerts[0].fingerprint, "SENTUSDT:positive:15m_volume_spike")
         self.assertTrue(alerts[0].message.startswith("❗"))
 
+    def test_stealth_volume_alert_needs_stable_funding_liquidity_and_trend(self) -> None:
+        valid = [
+            _signal(
+                "binanceusdm",
+                "SENTUSDT",
+                0.0001,
+                2.6,
+                raw_ratio=2.6,
+                one_hour_volume=6_000_000,
+                recent_volumes=(100.0, 120.0, 150.0),
+            )
+        ]
+        alerts = build_stealth_volume_alerts(valid, 0.0003, 2.5, 5_000_000, 3)
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0].divergence_type, "stealth_volume_accumulation")
+        self.assertEqual(alerts[0].fingerprint, "SENTUSDT:neutral:stealth_volume_accumulation")
+
+        unstable_funding = [
+            _signal("binanceusdm", "SENTUSDT", 0.0003, 2.6, raw_ratio=2.6, one_hour_volume=6_000_000, recent_volumes=(1, 2, 3))
+        ]
+        self.assertEqual(build_stealth_volume_alerts(unstable_funding, 0.0003, 2.5, 5_000_000, 3), [])
+
+        weak_liquidity = [
+            _signal("binanceusdm", "SENTUSDT", 0.0001, 2.6, raw_ratio=2.6, one_hour_volume=4_000_000, recent_volumes=(1, 2, 3))
+        ]
+        self.assertEqual(build_stealth_volume_alerts(weak_liquidity, 0.0003, 2.5, 5_000_000, 3), [])
+
+        not_increasing = [
+            _signal("binanceusdm", "SENTUSDT", 0.0001, 2.6, raw_ratio=2.6, one_hour_volume=6_000_000, recent_volumes=(3, 2, 4))
+        ]
+        self.assertEqual(build_stealth_volume_alerts(not_increasing, 0.0003, 2.5, 5_000_000, 3), [])
+
 
 def _signal(
     exchange_id: str,
@@ -117,6 +149,8 @@ def _signal(
     rate: float,
     ratio: float,
     raw_ratio: float | None = None,
+    one_hour_volume: float | None = None,
+    recent_volumes: tuple[float, ...] = (),
 ) -> ExchangeSignal:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     funding = _funding(symbol, rate, 10_000_000, exchange_id=exchange_id, now=now)
@@ -134,6 +168,8 @@ def _signal(
         raw_volume_ratio=raw_ratio,
         adjusted_volume_ratio=ratio,
         candle_progress=1.0,
+        one_hour_quote_volume=one_hour_volume,
+        recent_volumes=recent_volumes,
     )
     return ExchangeSignal(funding=funding, volume=volume)
 

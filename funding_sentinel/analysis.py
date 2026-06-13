@@ -40,6 +40,32 @@ def build_15m_volume_spike_alerts(
     return alerts
 
 
+def build_stealth_volume_alerts(
+    signals: list[ExchangeSignal],
+    stable_funding_threshold: float,
+    volume_ratio_threshold: float,
+    one_hour_volume_threshold: float,
+    trend_bars: int,
+) -> list[Alert]:
+    by_symbol: dict[str, list[ExchangeSignal]] = defaultdict(list)
+    for signal in signals:
+        by_symbol[signal.funding.compact_symbol].append(signal)
+
+    alerts: list[Alert] = []
+    for symbol, symbol_signals in by_symbol.items():
+        alert = _build_stealth_volume_alert(
+            symbol,
+            symbol_signals,
+            stable_funding_threshold,
+            volume_ratio_threshold,
+            one_hour_volume_threshold,
+            trend_bars,
+        )
+        if alert:
+            alerts.append(alert)
+    return alerts
+
+
 def _build_symbol_alert(
     symbol: str,
     signals: list[ExchangeSignal],
@@ -136,6 +162,65 @@ def _build_15m_volume_spike_alert(
     )
 
 
+def _build_stealth_volume_alert(
+    symbol: str,
+    signals: list[ExchangeSignal],
+    stable_funding_threshold: float,
+    volume_ratio_threshold: float,
+    one_hour_volume_threshold: float,
+    trend_bars: int,
+) -> Alert | None:
+    if not signals:
+        return None
+    if any(abs(signal.funding.funding_rate) >= stable_funding_threshold for signal in signals):
+        return None
+
+    stealth_signals = [
+        signal
+        for signal in signals
+        if _raw_volume_ratio(signal) is not None
+        and _raw_volume_ratio(signal) >= volume_ratio_threshold
+        and _one_hour_volume(signal) is not None
+        and _one_hour_volume(signal) >= one_hour_volume_threshold
+        and _is_increasing_volume(signal, trend_bars)
+    ]
+    if not stealth_signals:
+        return None
+
+    primary = max(
+        stealth_signals,
+        key=lambda signal: (
+            _raw_volume_ratio(signal) or 0,
+            _one_hour_volume(signal) or 0,
+        ),
+    )
+    max_ratio = _raw_volume_ratio(primary) or 0
+    max_funding_rate = max((signal.funding.funding_rate for signal in signals), key=abs)
+    message = format_stealth_volume_message(
+        primary,
+        signals,
+        stealth_signals,
+        max_funding_rate,
+        volume_ratio_threshold,
+        one_hour_volume_threshold,
+        trend_bars,
+    )
+
+    return Alert(
+        compact_symbol=symbol,
+        exchange_id="multi",
+        level="STABLE",
+        direction="neutral",
+        funding_rate=max_funding_rate,
+        funding_source=primary.funding.funding_source,
+        volume_ratio=max_ratio,
+        volume_level="highly_expanded",
+        divergence_type="stealth_volume_accumulation",
+        signal_tags=("stealth_volume_accumulation", "stable_funding", "volume_confirmed"),
+        message=message,
+        fingerprint=f"{symbol}:neutral:stealth_volume_accumulation",
+        timestamp=utc_now(),
+    )
 def _symbol_divergence_type(
     primary: ExchangeSignal,
     all_signals: list[ExchangeSignal],
@@ -348,6 +433,60 @@ def format_15m_volume_spike_message(
     )
 
 
+def format_stealth_volume_message(
+    primary: ExchangeSignal,
+    all_signals: list[ExchangeSignal],
+    stealth_signals: list[ExchangeSignal],
+    max_funding_rate: float,
+    volume_ratio_threshold: float,
+    one_hour_volume_threshold: float,
+    trend_bars: int,
+) -> str:
+    max_ratio = max(_raw_volume_ratio(signal) or 0 for signal in stealth_signals)
+    max_one_hour = max(_one_hour_volume(signal) or 0 for signal in stealth_signals)
+    trigger_exchanges = ", ".join(_exchange_name(signal.funding.exchange_id) for signal in stealth_signals)
+    event_time = utc_now().astimezone(CN_TZ).strftime("%Y-%m-%d %H:%M:%S CST")
+    exchange_lines = []
+
+    for item in sorted(all_signals, key=lambda value: value.funding.exchange_id):
+        rate_pct = item.funding.funding_rate * 100
+        raw_ratio = _raw_volume_ratio(item)
+        ratio_text = "n/a" if raw_ratio is None else f"{raw_ratio:.2f}x"
+        one_hour = _one_hour_volume(item)
+        one_hour_text = "n/a" if one_hour is None else f"{one_hour / 1_000_000:.2f}M"
+        trend_text = "递增" if _is_increasing_volume(item, trend_bars) else "未递增"
+        exchange_lines.append(
+            f"- {_exchange_name(item.funding.exchange_id)}: 资金费率 {rate_pct:+.4f}%, "
+            f"15m量比 {ratio_text}, 1h成交额 {one_hour_text}, 最近{trend_bars}根 {trend_text}"
+        )
+
+    return "\n".join(
+        [
+            "🟢【稳定费率放量监控】",
+            "",
+            f"币种：{primary.funding.compact_symbol}",
+            "触发类型：资金费率稳定 + 持续放量",
+            f"触发平台：{trigger_exchanges}",
+            f"最大资金费率绝对值：{abs(max_funding_rate) * 100:.4f}%",
+            f"最大15m原始量比：{max_ratio:.2f}x",
+            f"最大1h成交额：{max_one_hour / 1_000_000:.2f}M USDT",
+            "",
+            "📊 多平台快照",
+            *exchange_lines,
+            "",
+            f"🕒 时间：{event_time}",
+            (
+                "💡 信号说明：资金费率仍低于 L1，没有明显暴露仓位方向，"
+                f"但 15m 量比超过 {volume_ratio_threshold:.1f}x，1h成交额超过 "
+                f"{one_hour_volume_threshold / 1_000_000:.1f}M，且最近{trend_bars}根K线成交量递增。"
+                "这类结构可能对应不希望通过资金费率暴露意图的进仓或做市行为。"
+            ),
+            "",
+            "⚠️ 观察建议：重点看价格是否处在横盘吸筹、突破前压单、或突破后承接增强阶段；不要只按方向交易，先确认结构。",
+        ]
+    )
+
+
 def _signal_explanation(divergence_type: str, direction: str, tags: tuple[str, ...]) -> str:
     direction_text = "负费率" if direction == "negative" else "正费率"
     if divergence_type == "multi_exchange_sync":
@@ -386,6 +525,22 @@ def _raw_volume_ratio(signal: ExchangeSignal) -> float | None:
     if signal.volume.raw_volume_ratio is not None:
         return signal.volume.raw_volume_ratio
     return signal.volume.volume_ratio
+
+
+def _one_hour_volume(signal: ExchangeSignal) -> float | None:
+    if not signal.volume:
+        return None
+    return signal.volume.one_hour_quote_volume
+
+
+def _is_increasing_volume(signal: ExchangeSignal, trend_bars: int) -> bool:
+    if not signal.volume:
+        return False
+    volumes = signal.volume.recent_volumes
+    if len(volumes) < trend_bars:
+        return False
+    tail = volumes[-trend_bars:]
+    return all(later > earlier for earlier, later in zip(tail, tail[1:]))
 
 
 def _format_volume_ratio(volume) -> str:

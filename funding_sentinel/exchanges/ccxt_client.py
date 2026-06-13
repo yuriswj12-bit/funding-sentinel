@@ -64,6 +64,27 @@ class CcxtExchangeClient:
         previous_bars: int,
     ) -> VolumeSnapshot:
         rows = await asyncio.to_thread(_fetch_ohlcv, self.exchange_id, compact_symbol, timeframe, previous_bars + 1)
+        return self._volume_snapshot_from_rows(compact_symbol, timeframe, previous_bars, rows)
+
+    async def fetch_volume_trend_snapshot(
+        self,
+        compact_symbol: str,
+        timeframe: str,
+        previous_bars: int,
+        trend_bars: int,
+    ) -> VolumeSnapshot:
+        limit = max(previous_bars + 1, trend_bars, 4)
+        rows = await asyncio.to_thread(_fetch_ohlcv, self.exchange_id, compact_symbol, timeframe, limit)
+        return self._volume_snapshot_from_rows(compact_symbol, timeframe, previous_bars, rows, trend_bars=trend_bars)
+
+    def _volume_snapshot_from_rows(
+        self,
+        compact_symbol: str,
+        timeframe: str,
+        previous_bars: int,
+        rows: list[dict[str, float | int]],
+        trend_bars: int = 0,
+    ) -> VolumeSnapshot:
         timestamp = utc_now()
         if len(rows) < previous_bars + 1:
             return VolumeSnapshot(
@@ -94,6 +115,12 @@ class CcxtExchangeClient:
             else None
         )
         ratio = _confirmation_volume_ratio(raw_ratio, adjusted_ratio, progress)
+        one_hour_quote_volume = _one_hour_quote_volume(rows)
+        recent_volumes = tuple(
+            row["volume"]
+            for row in rows[-trend_bars:]
+            if trend_bars > 0 and row.get("volume") is not None
+        )
 
         return VolumeSnapshot(
             exchange_id=self.exchange_id,
@@ -109,6 +136,8 @@ class CcxtExchangeClient:
             raw_volume_ratio=raw_ratio,
             adjusted_volume_ratio=adjusted_ratio,
             candle_progress=progress,
+            one_hour_quote_volume=one_hour_quote_volume,
+            recent_volumes=recent_volumes,
         )
 
 
@@ -311,7 +340,7 @@ def _fetch_ohlcv(exchange_id: str, compact_symbol: str, timeframe: str, limit: i
             "https://fapi.binance.com/fapi/v1/klines",
             {"symbol": compact_symbol, "interval": _binance_interval(timeframe), "limit": limit},
         )
-        return [{"timestamp": _int(row[0]), "volume": _float(row[5])} for row in data]
+        return [{"timestamp": _int(row[0]), "volume": _float(row[5]), "quote_volume": _float(row[7])} for row in data]
 
     if exchange_id == "okx":
         venue_symbol = _venue_symbol(exchange_id, compact_symbol)
@@ -319,7 +348,7 @@ def _fetch_ohlcv(exchange_id: str, compact_symbol: str, timeframe: str, limit: i
             "https://www.okx.com/api/v5/market/candles",
             {"instId": venue_symbol, "bar": timeframe, "limit": limit},
         )
-        return [{"timestamp": _int(row[0]), "volume": _float(row[5])} for row in data["data"]]
+        return [{"timestamp": _int(row[0]), "volume": _float(row[5]), "quote_volume": _float(row[7])} for row in data["data"]]
 
     if exchange_id == "bitget":
         data = _get_json(
@@ -331,14 +360,14 @@ def _fetch_ohlcv(exchange_id: str, compact_symbol: str, timeframe: str, limit: i
                 "limit": limit,
             },
         )
-        return [{"timestamp": _int(row[0]), "volume": _float(row[5])} for row in data["data"]]
+        return [{"timestamp": _int(row[0]), "volume": _float(row[5]), "quote_volume": _float(row[6])} for row in data["data"]]
 
     if exchange_id == "bybit":
         data = _get_json(
             "https://api.bybit.com/v5/market/kline",
             {"category": "linear", "symbol": compact_symbol, "interval": _bybit_interval(timeframe), "limit": limit},
         )
-        return [{"timestamp": _int(row[0]), "volume": _float(row[5])} for row in data["result"]["list"]]
+        return [{"timestamp": _int(row[0]), "volume": _float(row[5]), "quote_volume": _float(row[6])} for row in data["result"]["list"]]
 
     raise ValueError(f"Unsupported exchange: {exchange_id}")
 
@@ -405,6 +434,17 @@ def _confirmation_volume_ratio(
     if progress >= 0.5 or raw_ratio >= 1.2:
         return adjusted_ratio
     return raw_ratio
+
+
+def _one_hour_quote_volume(rows: list[dict[str, float | int]]) -> float | None:
+    recent = rows[-4:]
+    values = [
+        row.get("quote_volume") if row.get("quote_volume") is not None else row.get("volume")
+        for row in recent
+    ]
+    if len(values) < 4 or any(value is None for value in values):
+        return None
+    return float(sum(values))
 
 
 def _timeframe_ms(timeframe: str) -> int | None:

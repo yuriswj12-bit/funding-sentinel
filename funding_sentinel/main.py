@@ -7,7 +7,7 @@ import signal
 from contextlib import suppress
 from dataclasses import replace
 
-from funding_sentinel.analysis import build_15m_volume_spike_alerts, build_alerts
+from funding_sentinel.analysis import build_15m_volume_spike_alerts, build_alerts, build_stealth_volume_alerts
 from funding_sentinel.config import Settings, is_tokenized_stock_symbol, level_rank, load_settings
 from funding_sentinel.exchanges.ccxt_client import CcxtExchangeClient, close_all
 from funding_sentinel.models import Alert, ExchangeSignal, FundingSnapshot, utc_now
@@ -62,15 +62,20 @@ async def run_once(
     notifier: TelegramNotifier,
 ) -> None:
     if settings.market_scan:
-        symbols, funding_cache, supported_symbols = await _discover_market_candidates(settings, clients)
+        symbols, stealth_pairs, funding_cache, supported_symbols = await _discover_market_candidates(settings, clients)
         logger.info("Starting market scan for %s candidate symbols", len(symbols))
     else:
         symbols = settings.monitored_symbols
+        stealth_pairs = [
+            (compact_symbol, exchange_id)
+            for compact_symbol in settings.monitored_symbols
+            for exchange_id in settings.exchange_ids
+        ]
         funding_cache = {}
         supported_symbols = {client.exchange_id: set(symbols) for client in clients}
         logger.info("Starting configured scan for %s", ", ".join(symbols))
 
-    if not symbols:
+    if not symbols and not stealth_pairs:
         logger.info("No candidate symbols found")
         return
 
@@ -80,8 +85,8 @@ async def run_once(
         for client in clients
         if compact_symbol in supported_symbols.get(client.exchange_id, set())
     ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
     signals: list[ExchangeSignal] = []
+    results = await asyncio.gather(*tasks, return_exceptions=True) if tasks else []
 
     for result in results:
         if isinstance(result, Exception):
@@ -100,10 +105,27 @@ async def run_once(
         settings.spike_volume_ratio_threshold,
     )
     alerts.extend(spike_alerts)
+    stealth_signals = await _collect_stealth_signals(
+        settings,
+        clients,
+        stealth_pairs,
+        supported_symbols,
+        funding_cache,
+        storage,
+    )
+    stealth_alerts = build_stealth_volume_alerts(
+        stealth_signals,
+        settings.funding_levels["L1"],
+        settings.stealth_volume_ratio_threshold,
+        settings.stealth_one_hour_volume_usdt,
+        settings.stealth_trend_bars,
+    )
+    alerts.extend(stealth_alerts)
     logger.info(
-        "Scan produced %s signals, %s spike signals, and %s candidate alerts",
+        "Scan produced %s signals, %s spike signals, %s stealth signals, and %s candidate alerts",
         len(signals),
         len(spike_signals),
+        len(stealth_signals),
         len(alerts),
     )
 
@@ -195,10 +217,65 @@ async def _collect_spike_signals(
     return signals
 
 
+async def _collect_stealth_signals(
+    settings: Settings,
+    clients: list[CcxtExchangeClient],
+    pairs: list[tuple[str, str]],
+    supported_symbols: dict[str, set[str]],
+    funding_cache: dict[tuple[str, str], FundingSnapshot],
+    storage: Storage,
+) -> list[ExchangeSignal]:
+    clients_by_id = {client.exchange_id: client for client in clients}
+    tasks = [
+        _collect_trend_signal(
+            clients_by_id[exchange_id],
+            compact_symbol,
+            settings.stealth_volume_timeframe,
+            settings.stealth_volume_prev_bars,
+            settings.stealth_trend_bars,
+            funding_cache,
+        )
+        for compact_symbol, exchange_id in pairs
+        if exchange_id in clients_by_id and compact_symbol in supported_symbols.get(exchange_id, set())
+    ]
+    if not tasks:
+        return []
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    signals: list[ExchangeSignal] = []
+    for result in results:
+        if isinstance(result, Exception):
+            logger.warning("Stealth volume collection failed: %r", result)
+            continue
+        signals.append(result)
+        if result.volume:
+            storage.insert_volume(result.volume)
+    return signals
+
+
+async def _collect_trend_signal(
+    client: CcxtExchangeClient,
+    compact_symbol: str,
+    timeframe: str,
+    previous_bars: int,
+    trend_bars: int,
+    funding_cache: dict[tuple[str, str], FundingSnapshot] | None = None,
+) -> ExchangeSignal:
+    cached_funding = (funding_cache or {}).get((client.exchange_id, compact_symbol))
+    if cached_funding:
+        funding = cached_funding
+        volume = await client.fetch_volume_trend_snapshot(compact_symbol, timeframe, previous_bars, trend_bars)
+    else:
+        funding, volume = await asyncio.gather(
+            client.fetch_funding_snapshot(compact_symbol),
+            client.fetch_volume_trend_snapshot(compact_symbol, timeframe, previous_bars, trend_bars),
+        )
+    return ExchangeSignal(funding=funding, volume=volume)
+
+
 async def _discover_market_candidates(
     settings: Settings,
     clients: list[CcxtExchangeClient],
-) -> tuple[list[str], dict[tuple[str, str], FundingSnapshot], dict[str, set[str]]]:
+) -> tuple[list[str], list[tuple[str, str]], dict[tuple[str, str], FundingSnapshot], dict[str, set[str]]]:
     funding_results = await asyncio.gather(
         *(client.fetch_market_funding_snapshots() for client in clients),
         return_exceptions=True,
@@ -210,6 +287,9 @@ async def _discover_market_candidates(
     funding_cache: dict[tuple[str, str], FundingSnapshot] = {}
     supported_symbols: dict[str, set[str]] = {}
     severity_by_symbol: dict[str, tuple[int, int, float, float]] = {}
+    stable_score_by_symbol: dict[str, float] = {}
+    stable_exchange_by_symbol: dict[str, str] = {}
+    unstable_symbols: set[str] = set()
 
     for client, result in zip(clients, symbol_results, strict=True):
         if isinstance(result, Exception):
@@ -232,6 +312,13 @@ async def _discover_market_candidates(
             if not _passes_24h_volume_filter(snapshot, settings):
                 continue
             rank = level_rank(snapshot.level)
+            if rank >= settings.min_alert_rank:
+                unstable_symbols.add(snapshot.compact_symbol)
+            elif abs(snapshot.funding_rate) < settings.funding_levels["L1"]:
+                stable_score = snapshot.volume_24h_usdt or 0.0
+                if stable_score > stable_score_by_symbol.get(snapshot.compact_symbol, 0.0):
+                    stable_score_by_symbol[snapshot.compact_symbol] = stable_score
+                    stable_exchange_by_symbol[snapshot.compact_symbol] = client.exchange_id
             if rank < settings.min_alert_rank:
                 continue
             negative_priority = 1 if settings.prefer_negative_funding and snapshot.funding_rate < 0 else 0
@@ -258,7 +345,16 @@ async def _discover_market_candidates(
     )
     if sorted_symbols:
         logger.info("Market candidates: %s", ", ".join(sorted_symbols))
-    return sorted_symbols, funding_cache, supported_symbols
+    stable_symbols = [
+        symbol
+        for symbol in sorted(stable_score_by_symbol, key=lambda item: stable_score_by_symbol[item], reverse=True)
+        if symbol not in unstable_symbols
+    ]
+    if settings.stealth_max_candidate_symbols > 0:
+        stable_symbols = stable_symbols[: settings.stealth_max_candidate_symbols]
+    stable_pairs = [(symbol, stable_exchange_by_symbol[symbol]) for symbol in stable_symbols]
+    logger.info("Stealth volume selected %s stable-funding candidate symbols", len(stable_pairs))
+    return sorted_symbols, stable_pairs, funding_cache, supported_symbols
 
 
 def _passes_24h_volume_filter(snapshot: FundingSnapshot, settings: Settings) -> bool:

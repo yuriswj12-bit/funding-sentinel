@@ -50,8 +50,8 @@ class Storage:
                 timestamp, exchange_id, compact_symbol, ccxt_symbol, timeframe,
                 current_volume, previous_average_volume, volume_ratio,
                 raw_volume_ratio, adjusted_volume_ratio, candle_progress,
-                volume_level, candle_timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                one_hour_quote_volume, volume_level, candle_timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _dt(snapshot.timestamp),
@@ -65,6 +65,7 @@ class Storage:
                 snapshot.raw_volume_ratio,
                 snapshot.adjusted_volume_ratio,
                 snapshot.candle_progress,
+                snapshot.one_hour_quote_volume,
                 snapshot.volume_level,
                 _dt(snapshot.candle_timestamp),
             ),
@@ -217,6 +218,7 @@ class Storage:
                 raw_volume_ratio REAL,
                 adjusted_volume_ratio REAL,
                 candle_progress REAL,
+                one_hour_quote_volume REAL,
                 volume_level TEXT NOT NULL,
                 candle_timestamp TEXT
             );
@@ -267,7 +269,7 @@ class Storage:
             row["name"]
             for row in self.conn.execute("PRAGMA table_info(volume_snapshots)").fetchall()
         }
-        for column in ("raw_volume_ratio", "adjusted_volume_ratio", "candle_progress"):
+        for column in ("raw_volume_ratio", "adjusted_volume_ratio", "candle_progress", "one_hour_quote_volume"):
             if column not in volume_columns:
                 self.conn.execute(f"ALTER TABLE volume_snapshots ADD COLUMN {column} REAL")
         self.conn.commit()
