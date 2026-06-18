@@ -39,6 +39,9 @@ Run one scan and exit:
 python -m funding_sentinel.main --once
 ```
 
+All local commands and configuration switches are listed in
+`docs/COMMANDS.md`.
+
 Telegram is optional. If `TG_BOT_TOKEN` or `TG_CHAT_ID` is empty, alerts are
 logged and stored but not pushed.
 
